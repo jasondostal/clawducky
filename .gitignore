@@ -1,6 +1,9 @@
 # Claude Code
 .claude/
 
+# WiFi credentials (copy wifi_credentials.h.example)
+wifi_credentials.h
+
 # Arduino IDE build output
 build/
 *.elf

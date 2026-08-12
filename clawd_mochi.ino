@@ -12,7 +12,8 @@
  *     VCC → 3V3
  *     GND → GND
  *
- *   WiFi: "ClaWD-Mochi"  pw: clawd1234  → http://192.168.4.1
+ *   WiFi: joins home network (wifi_credentials.h) → http://clawd.local
+ *         fallback hotspot "ClaWD-Mochi" pw: clawd1234 → 192.168.4.1
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
@@ -22,6 +23,20 @@
 #include <math.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESPmDNS.h>
+
+// ── Home WiFi (station mode) ──────────────────────────────────
+// Copy wifi_credentials.h.example → wifi_credentials.h and fill in.
+// Missing file or empty SSID → boots straight into the hotspot.
+#if __has_include("wifi_credentials.h")
+  #include "wifi_credentials.h"
+#endif
+#ifndef WIFI_SSID
+  #define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASS
+  #define WIFI_PASS ""
+#endif
 
 // ── Pins ──────────────────────────────────────────────────────
 #define TFT_CS  4
@@ -35,6 +50,7 @@ Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 const char* AP_SSID = "ClaWD-Mochi";
 const char* AP_PASS = "clawd1234";
 WebServer server(80);
+bool staConnected = false;
 
 // ── Display ───────────────────────────────────────────────────
 #define DISP_W 240
@@ -48,7 +64,7 @@ WebServer server(80);
 #define EYE_OY  40    // vertical offset upward (subtracted from centre)
 
 // ── Colours ───────────────────────────────────────────────────
-uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN;
+uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN, C_RED;
 #define C_WHITE ST77XX_WHITE
 #define C_BLACK ST77XX_BLACK
 
@@ -65,6 +81,20 @@ uint8_t  animSpeed    = 1;   // 1=slow(default) 2=normal 3=fast
 
 uint16_t animBgColor  = 0;   // background for eye/logo animations
 uint16_t drawBgColor  = 0;   // background for canvas
+
+// ── Claude Code status (driven by /claude?e=... from hooks) ───
+#define CL_NONE    0
+#define CL_WORKING 1
+#define CL_WAITING 2
+#define CL_DONE    3
+#define CL_ERROR   4
+
+uint8_t  claudeState   = CL_NONE;
+uint8_t  claudeFrame   = 0;
+uint32_t claudeFrameAt = 0;   // next animation frame due
+uint32_t claudeExpires = 0;   // auto-return for transient states (0 = never)
+uint32_t nextIdleBlink = 0;
+bool     uiStarted     = false;  // false while boot info screen is showing
 
 // ── Terminal ──────────────────────────────────────────────────
 #define TERM_COLS      15
@@ -214,6 +244,7 @@ void initColours() {
   C_DARKBG = tft.color565(10,  12,  16);
   C_MUTED  = tft.color565(90,  88,  86);
   C_GREEN  = tft.color565(80, 220, 130);
+  C_RED    = tft.color565(190, 40, 30);
   animBgColor = C_ORANGE;
   drawBgColor = C_ORANGE;
 }
@@ -448,6 +479,108 @@ void animLogoReveal() {
   drawLogoFilled(animBgColor, C_WHITE);
   delay(1500);
   busy = false;
+}
+
+// ═════════════════════════════════════════════════════════════
+//  CLAUDE STATUS (non-blocking, ticked from loop)
+// ═════════════════════════════════════════════════════════════
+
+void claudeCaption(const char* msg, uint16_t bg, uint16_t col) {
+  tft.fillRect(0, 170, DISP_W, 22, bg);
+  const int16_t w = strlen(msg) * 12;   // textSize 2 → 12 px/char
+  tft.setTextColor(col); tft.setTextSize(2);
+  tft.setCursor((DISP_W - w) / 2, 172);
+  tft.print(msg);
+}
+
+void claudeDots(uint8_t active, uint16_t bg) {
+  const int16_t y = 214, r = 5, gap = 26;
+  const int16_t x0 = DISP_W / 2 - gap;
+  for (uint8_t i = 0; i < 3; i++) {
+    if (i == active) tft.fillCircle(x0 + i * gap, y, r, C_BLACK);
+    else {
+      tft.fillCircle(x0 + i * gap, y, r, bg);
+      tft.drawCircle(x0 + i * gap, y, r, C_BLACK);
+    }
+  }
+}
+
+void enterClaude(uint8_t s) {
+  claudeState   = s;
+  claudeFrame   = 0;
+  claudeFrameAt = 0;
+  claudeExpires = 0;
+  termMode      = false;
+  uiStarted     = true;
+  if (!backlightOn) setBacklight(true);
+
+  switch (s) {
+    case CL_WORKING:
+      currentView = VIEW_EYES_SQUISH;
+      drawSquishEyes();
+      claudeCaption("working", animBgColor, C_BLACK);
+      break;
+    case CL_WAITING:
+      currentView = VIEW_EYES_NORMAL;
+      drawNormalEyes();
+      claudeCaption("your turn!", animBgColor, C_BLACK);
+      break;
+    case CL_DONE:
+      currentView = VIEW_EYES_SQUISH;
+      animSquishEyes();   // happy open/close wiggle
+      claudeCaption("done!", animBgColor, C_BLACK);
+      claudeExpires = millis() + 6000;
+      break;
+    case CL_ERROR: {
+      tft.fillScreen(C_RED);
+      const int16_t lx = eyeLX(0), rx = eyeRX(0), cy = eyeCY();
+      tft.fillRect(lx, cy - 5, EYE_W, 10, C_BLACK);   // flat, unimpressed
+      tft.fillRect(rx, cy - 5, EYE_W, 10, C_BLACK);
+      claudeCaption("error", C_RED, C_WHITE);
+      break;
+    }
+    default:  // CL_NONE — back to plain idle eyes
+      currentView = VIEW_EYES_NORMAL;
+      drawNormalEyes();
+      break;
+  }
+}
+
+void claudeTick() {
+  if (claudeState == CL_NONE) {
+    // occasional idle blink so the crab feels alive between commands
+    if (uiStarted && currentView == VIEW_EYES_NORMAL && !busy && !termMode
+        && millis() > nextIdleBlink) {
+      drawNormalEyes(0, true); delay(90); drawNormalEyes(0, false);
+      nextIdleBlink = millis() + 3000 + random(5000);
+    }
+    return;
+  }
+  if (claudeExpires && millis() > claudeExpires) { enterClaude(CL_NONE); return; }
+  if (millis() < claudeFrameAt) return;
+
+  switch (claudeState) {
+    case CL_WORKING:
+      claudeDots(claudeFrame % 3, animBgColor);
+      if (claudeFrame % 10 == 9) {   // quick blink now and then
+        drawSquishEyes(true); delay(90); drawSquishEyes(false);
+        claudeCaption("working", animBgColor, C_BLACK);
+      }
+      claudeFrame++;
+      claudeFrameAt = millis() + 350;
+      break;
+    case CL_WAITING: {
+      static const int16_t look[] = {0, -14, 0, 14};
+      drawNormalEyes(look[claudeFrame % 4], claudeFrame % 7 == 6);
+      claudeCaption("your turn!", animBgColor, C_BLACK);
+      claudeFrame++;
+      claudeFrameAt = millis() + 700;
+      break;
+    }
+    default:  // CL_DONE waits for expiry, CL_ERROR is static
+      claudeFrameAt = millis() + 500;
+      break;
+  }
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -896,6 +1029,8 @@ void routeCmd() {
     server.send(400, "application/json", "{\"e\":1}"); return;
   }
   const char c = server.arg("k")[0];
+  uiStarted = true;
+  claudeState = CL_NONE;   // manual control overrides hook-driven state
 
   if (termMode) {
     if (c == 'q') { termMode = false; drawCodeView(); }
@@ -928,8 +1063,20 @@ void routeSpeed() {
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
+// /claude?e=working|waiting|done|error|idle — Claude Code hook events
+void routeClaude() {
+  const String e = server.arg("e");
+  server.send(200, "application/json", "{\"ok\":1}");
+  if      (e == "working") enterClaude(CL_WORKING);
+  else if (e == "waiting") enterClaude(CL_WAITING);
+  else if (e == "done")    enterClaude(CL_DONE);
+  else if (e == "error")   enterClaude(CL_ERROR);
+  else if (e == "idle")    enterClaude(CL_NONE);
+}
+
 // /redraw?bg=hex — set animBg and immediately redraw current view
 void routeRedraw() {
+  uiStarted = true;
   if (server.hasArg("bg")) {
     animBgColor = hexToRgb565(server.arg("bg"));
     drawBgColor = animBgColor;
@@ -944,6 +1091,8 @@ void routeRedraw() {
 }
 
 void routeCanvas() {
+  uiStarted = true;
+  claudeState = CL_NONE;
   const bool on = server.hasArg("on") && server.arg("on") == "1";
   if (on) { currentView = VIEW_DRAW; tft.fillScreen(drawBgColor); }
   server.send(200, "application/json", "{\"ok\":1}");
@@ -1012,7 +1161,11 @@ void routeState() {
   j += ",\"term\":";   j += termMode    ? "true" : "false";
   j += ",\"bl\":";     j += backlightOn ? "true" : "false";
   j += ",\"speed\":";  j += animSpeed;
-  j += "}";
+  j += ",\"claude\":"; j += claudeState;
+  j += ",\"sta\":";    j += staConnected ? "true" : "false";
+  j += ",\"ip\":\"";
+  j += staConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+  j += "\"}";
   server.send(200, "application/json", j);
 }
 
@@ -1044,23 +1197,49 @@ void setup() {
   // ── Logo shown once at startup ─────────────────────────────
   animLogoReveal();
 
-  // ── Start WiFi ─────────────────────────────────────────────
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID, AP_PASS);
+  // ── Start WiFi: join home network, hotspot as fallback ─────
+  if (strlen(WIFI_SSID) > 0) {
+    WiFi.mode(WIFI_STA);
+    // C3 Super Mini antenna quirk: full TX power breaks many STA connects
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    const uint32_t t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(250);
+    staConnected = (WiFi.status() == WL_CONNECTED);
+  }
+  if (!staConnected) {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(AP_SSID, AP_PASS);
+  }
+  if (MDNS.begin("clawd")) MDNS.addService("http", "tcp", 80);
 
   // ── WiFi info screen (stays until first web request) ───────
   tft.fillScreen(C_DARKBG);
   tft.fillRect(0, 0, DISP_W, 4, C_ORANGE);
-  tft.setTextColor(C_WHITE);  tft.setTextSize(2);
-  tft.setCursor(12, 16);  tft.print("WiFi: ClaWD-Mochi");
-  tft.setTextColor(C_MUTED);  tft.setTextSize(1);
-  tft.setCursor(12, 44);  tft.print("password: clawd1234");
-  tft.setTextColor(C_WHITE);  tft.setTextSize(2);
-  tft.setCursor(12, 68);  tft.print("Open browser:");
-  tft.setTextColor(C_ORANGE); tft.setTextSize(2);
-  tft.setCursor(12, 94);  tft.print("192.168.4.1");
-  tft.setTextColor(C_MUTED);  tft.setTextSize(1);
-  tft.setCursor(12, 124); tft.print("press any button to start");
+  if (staConnected) {
+    tft.setTextColor(C_WHITE);  tft.setTextSize(2);
+    tft.setCursor(12, 16);  tft.print("WiFi: joined");
+    tft.setTextColor(C_MUTED);  tft.setTextSize(1);
+    tft.setCursor(12, 44);  tft.print(WIFI_SSID);
+    tft.setTextColor(C_WHITE);  tft.setTextSize(2);
+    tft.setCursor(12, 68);  tft.print("Open browser:");
+    tft.setTextColor(C_ORANGE); tft.setTextSize(2);
+    tft.setCursor(12, 94);  tft.print("clawd.local");
+    tft.setTextColor(C_MUTED);  tft.setTextSize(1);
+    tft.setCursor(12, 124); tft.print(WiFi.localIP().toString());
+    tft.setCursor(12, 140); tft.print("press any button to start");
+  } else {
+    tft.setTextColor(C_WHITE);  tft.setTextSize(2);
+    tft.setCursor(12, 16);  tft.print("WiFi: ClaWD-Mochi");
+    tft.setTextColor(C_MUTED);  tft.setTextSize(1);
+    tft.setCursor(12, 44);  tft.print("password: clawd1234");
+    tft.setTextColor(C_WHITE);  tft.setTextSize(2);
+    tft.setCursor(12, 68);  tft.print("Open browser:");
+    tft.setTextColor(C_ORANGE); tft.setTextSize(2);
+    tft.setCursor(12, 94);  tft.print("192.168.4.1");
+    tft.setTextColor(C_MUTED);  tft.setTextSize(1);
+    tft.setCursor(12, 124); tft.print("press any button to start");
+  }
 
   // ── Register routes ────────────────────────────────────────
   server.on("/",            HTTP_GET, routeRoot);
@@ -1072,6 +1251,7 @@ void setup() {
   server.on("/draw/clear",  HTTP_GET, routeDrawClear);
   server.on("/draw/stroke", HTTP_GET, routeDrawStroke);
   server.on("/backlight",   HTTP_GET, routeBacklight);
+  server.on("/claude",      HTTP_GET, routeClaude);
   server.on("/state",       HTTP_GET, routeState);
   server.onNotFound(routeNotFound);
   server.begin();
@@ -1084,4 +1264,7 @@ void setup() {
 //  LOOP
 // ═════════════════════════════════════════════════════════════
 
-void loop() { server.handleClient(); }
+void loop() {
+  server.handleClient();
+  claudeTick();
+}

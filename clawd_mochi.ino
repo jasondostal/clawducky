@@ -6,7 +6,7 @@
  *     SDA → GPIO 10  (hardware SPI MOSI)
  *     SCL → GPIO 8   (hardware SPI SCK)
  *     RST → GPIO 2
- *     DC  → GPIO 1
+ *     DC  → GPIO 5   (XIAO D3 — GPIO1 isn't broken out on XIAO ESP32-C3)
  *     CS  → GPIO 4
  *     BL  → GPIO 3
  *     VCC → 3V3
@@ -40,7 +40,7 @@
 
 // ── Pins ──────────────────────────────────────────────────────
 #define TFT_CS  4
-#define TFT_DC  1
+#define TFT_DC  5   // XIAO ESP32-C3: GPIO1 not broken out; D3 = GPIO5
 #define TFT_RST 2
 #define TFT_BLK 3
 

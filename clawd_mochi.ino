@@ -1206,10 +1206,19 @@ void setup() {
     const uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(250);
     staConnected = (WiFi.status() == WL_CONNECTED);
+    if (staConnected) {
+      Serial.print("STA connected: ");  Serial.print(WIFI_SSID);
+      Serial.print(" ip=");             Serial.println(WiFi.localIP());
+    } else {
+      Serial.print("STA failed (status=");
+      Serial.print(WiFi.status());      Serial.println("), falling back to AP");
+    }
   }
   if (!staConnected) {
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID, AP_PASS);
+    Serial.print("AP up: ");  Serial.print(AP_SSID);
+    Serial.print(" ip=");     Serial.println(WiFi.softAPIP());
   }
   if (MDNS.begin("clawd")) MDNS.addService("http", "tcp", 80);
 

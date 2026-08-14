@@ -56,16 +56,30 @@ Clawd Mochi sits on your desk and shows animated expressions on a small color di
 
 > ⚠️ Connect VCC to **3.3V only** — never 5V. Use GPIO 8 and 10 for SPI (hardware SPI, fast). Do not use GPIO 6/7 for SPI.
 
-| Display pin | ESP32-C3 GPIO  | Wire color (suggested) |
-| ----------- | -------------- | ---------------------- |
-| VCC         | 3V3            | Red                    |
-| GND         | GND            | Black                  |
-| SDA         | GPIO 10 (MOSI) | Orange                 |
-| SCL         | GPIO 8 (SCK)   | Green                  |
-| RES         | GPIO 2         | Purple                 |
-| DC          | GPIO 1         | Blue                   |
-| CS          | GPIO 4         | White                  |
-| BL          | GPIO 3         | Yellow                 |
+Pin numbers below are for the **Seeed XIAO ESP32-C3**. GPIO 1 is not broken out on the
+XIAO, so DC moves to GPIO 5 (`D3`) — on a Super Mini, DC goes to GPIO 1 instead and the
+rest of the table is unchanged. Set `TFT_DC` in the sketch to match your board.
+
+| Display pin | ESP32-C3 GPIO  | XIAO label | Wire color (suggested) |
+| ----------- | -------------- | ---------- | ---------------------- |
+| VCC         | 3V3            | 3V3        | Red                    |
+| GND         | GND            | GND        | Black                  |
+| SDA         | GPIO 10 (MOSI) | D10        | Orange                 |
+| SCL         | GPIO 8 (SCK)   | D8         | Green                  |
+| RES         | GPIO 2         | D0         | Purple                 |
+| DC          | GPIO 5         | D3         | Blue                   |
+| CS          | GPIO 4         | D2         | White                  |
+| BL          | GPIO 3         | D1         | Yellow                 |
+
+On the XIAO the right-hand header runs `D7 D8 D9 D10 3V3 GND VUSB` top to bottom, and the
+left-hand header runs `D0`–`D6` top to bottom.
+
+Verified against a `MRD0-1.54IPS 240*240(RGB)` panel — the 8-pin variant with a real CS
+line. Some 1.3" ST7789 boards ship 7 pins with no CS; on those, set `#define TFT_CS -1`.
+
+The XIAO has **no onboard antenna** (U.FL connector only). Attach an external antenna
+before powering up — it will appear to join WiFi without one on connector leakage alone,
+but range is unusable and transmitting into an unterminated connector is bad for the radio.
 
 ---
 

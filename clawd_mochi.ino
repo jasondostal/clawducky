@@ -76,6 +76,7 @@ uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN, C_RED;
 #define VIEW_EXPRESSION  4   // a static face from EXPRESSIONS[]; idle blink leaves it alone
 
 uint8_t  currentView  = VIEW_EYES_NORMAL;
+uint8_t  currentExpr  = 0;   // which EXPRESSIONS[] entry VIEW_EXPRESSION is holding
 bool     busy         = false;
 bool     backlightOn  = true;
 uint8_t  animSpeed    = 1;   // 1=slow(default) 2=normal 3=fast
@@ -426,29 +427,70 @@ void drawBrow(int16_t cx, int16_t topY, int8_t tilt, int8_t half,
     tft.drawLine(outer, topY + t, inner, topY + tilt + t, col);
 }
 
-void drawExpression(uint8_t idx) {
+// One frame of a face. The table holds the resting pose; browDY (raises the
+// brow), pupilDX (slides the pupils) and blink are the runtime deltas, so the
+// held pose and every animation frame come out of the same code path.
+void drawExpressionFrame(uint8_t idx, int16_t browDY, int16_t pupilDX, bool blink) {
   if (idx >= EXPRESSION_COUNT) return;
   const Expression& e = EXPRESSIONS[idx];
   tft.fillScreen(animBgColor);
   const int16_t cy  = EX_CY;
   const int16_t lcx = DISP_W / 2 - EX_DX;
   const int16_t rcx = DISP_W / 2 + EX_DX;
-  drawEyeShape(e.shape, lcx, cy, C_BLACK);
-  drawEyeShape(e.shape, rcx, cy, C_BLACK);
-  if (e.pupil) {
+  const uint8_t shape = blink ? ES_FLAT : e.shape;
+
+  drawEyeShape(shape, lcx, cy, C_BLACK);
+  drawEyeShape(shape, rcx, cy, C_BLACK);
+  if (e.pupil && !blink) {
     const int16_t pr = (EX_R - EX_THK) / 2;
-    tft.fillCircle(lcx + e.pupilOX, cy, pr, C_BLACK);
-    tft.fillCircle(rcx + e.pupilOX, cy, pr, C_BLACK);
+    tft.fillCircle(lcx + pupilDX, cy, pr, C_BLACK);
+    tft.fillCircle(rcx + pupilDX, cy, pr, C_BLACK);
   }
   if (e.brow) {
     // Anchor to the top of the eye, then rise by the tilt so an angled brow
-    // never clips into the eye it belongs to.
+    // never clips into the eye it belongs to. The brow keeps its height during
+    // a blink so the face doesn't lose its expression mid-blink.
     const int tilt = (e.tiltL > e.tiltR) ? e.tiltL : e.tiltR;
     const int lift = (tilt > 0) ? tilt : 0;
-    const int16_t browY = cy - eyeTopExtent(e.shape) - e.browGap - EX_THK - lift;
+    const int16_t browY = cy - eyeTopExtent(e.shape) - e.browGap
+                             - EX_THK - lift - browDY;
     drawBrow(lcx, browY, e.tiltL, e.browHalf, true,  C_BLACK);
     drawBrow(rcx, browY, e.tiltR, e.browHalf, false, C_BLACK);
   }
+}
+
+void drawExpression(uint8_t idx) {
+  if (idx >= EXPRESSION_COUNT) return;
+  drawExpressionFrame(idx, 0, EXPRESSIONS[idx].pupilOX, false);
+}
+
+// Entry animation. Each face animates the thing that carries its meaning: the
+// brow drops into place, then the pupils slide over. A face whose brow does
+// the work gets a slam; side-eye gets the glance.
+void animExpression(uint8_t idx) {
+  if (idx >= EXPRESSION_COUNT) return;
+  const Expression& e = EXPRESSIONS[idx];
+  const int16_t target = e.pupil ? e.pupilOX : 0;
+
+  if (e.brow) {
+    for (int16_t d = 20; d > 0; d -= 5) {
+      drawExpressionFrame(idx, d, 0, false);   // pupils stay centred until the brow lands
+      delay(speedMs(45));
+    }
+  }
+  if (target != 0) {
+    // Pupils start centred and slide — the glance is the whole joke.
+    const int16_t step = target > 0 ? 3 : -3;
+    for (int16_t p = 0; abs(p) < abs(target); p += step) {
+      drawExpressionFrame(idx, 0, p, false);
+      delay(speedMs(55));
+    }
+  }
+  drawExpressionFrame(idx, 0, target, false);
+  delay(speedMs(140));
+  drawExpressionFrame(idx, 0, target, true);
+  delay(speedMs(95));
+  drawExpressionFrame(idx, 0, target, false);
 }
 
 int8_t expressionIndex(const String& id) {
@@ -689,6 +731,17 @@ void claudeTick() {
     if (uiStarted && currentView == VIEW_EYES_NORMAL && !busy && !termMode
         && millis() > nextIdleBlink) {
       drawNormalEyes(0, true); delay(90); drawNormalEyes(0, false);
+      nextIdleBlink = millis() + 3000 + random(5000);
+    }
+    // A held expression keeps breathing too. Faces already drawn as a flat bar
+    // are skipped — blinking them is an invisible change but a visible flicker.
+    if (uiStarted && currentView == VIEW_EXPRESSION && !busy && !termMode
+        && EXPRESSIONS[currentExpr].shape != ES_FLAT
+        && millis() > nextIdleBlink) {
+      const int16_t pox = EXPRESSIONS[currentExpr].pupil
+                        ? EXPRESSIONS[currentExpr].pupilOX : 0;
+      drawExpressionFrame(currentExpr, 0, pox, true);  delay(90);
+      drawExpressionFrame(currentExpr, 0, pox, false);
       nextIdleBlink = millis() + 3000 + random(5000);
     }
     return;
@@ -1254,8 +1307,10 @@ void routeFace() {
   claudeState = CL_NONE;   // manual control overrides hook-driven state
   termMode    = false;
   currentView = VIEW_EXPRESSION;
+  currentExpr = (uint8_t)idx;
   server.send(200, "application/json", "{\"ok\":1}");
-  drawExpression((uint8_t)idx);
+  animExpression((uint8_t)idx);
+  nextIdleBlink = millis() + 3000 + random(5000);
 }
 
 void routeChar() {

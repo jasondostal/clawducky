@@ -73,6 +73,7 @@ uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN, C_RED;
 #define VIEW_EYES_SQUISH 1
 #define VIEW_CODE        2
 #define VIEW_DRAW        3
+#define VIEW_EXPRESSION  4   // a static face from EXPRESSIONS[]; idle blink leaves it alone
 
 uint8_t  currentView  = VIEW_EYES_NORMAL;
 bool     busy         = false;
@@ -318,6 +319,101 @@ void drawSquishEyes(bool closed = false) {
     tft.fillRect(lx, cy - 5, EYE_W, 10, C_BLACK);
     tft.fillRect(rx, cy - 5, EYE_W, 10, C_BLACK);
   }
+}
+
+// ── Expressions ───────────────────────────────────────────────
+// Every face here is "an eye shape plus an optional brow". Almost nothing
+// that separates one expression from another lives in the eye — it lives in
+// the brow angle. Keeping the brow as its own primitive means a new face is
+// one row in EXPRESSIONS[], not another draw function.
+
+#define ES_RECT   0   // tall filled bar — the default open eye
+#define ES_CIRCLE 1   // filled disc
+#define ES_FLAT   2   // thin horizontal slit
+#define ES_CROSS  3   // X
+#define ES_ARC    4   // ^ chevron
+
+struct Expression {
+  const char* id;
+  uint8_t     shape;
+  bool        brow;
+  int8_t      tiltL;     // vertical delta of the INNER brow end, in px:
+  int8_t      tiltR;     //   + drops it toward the nose (angry), - raises it
+  int8_t      browLift;  // extra px of clearance above the eye
+  int8_t      eyeOX;     // horizontal shove, for side-eye
+};
+
+const Expression EXPRESSIONS[] = {
+  //  id             shape      brow   tiltL tiltR  lift  ox
+  { "disapproval",   ES_CIRCLE, true,      0,    0,    6,   0 },  // ಠ_ಠ
+  { "skeptical",     ES_CIRCLE, true,    -11,    5,    6,   0 },  // one up, one down
+  { "angry",         ES_RECT,   true,     11,   11,    4,   0 },
+  { "sideeye",       ES_RECT,   true,      0,    0,    4,  16 },
+  { "alert",         ES_CIRCLE, false,     0,    0,    0,   0 },  // O_O
+  { "happy",         ES_ARC,    false,     0,    0,    0,   0 },  // ^_^
+  { "sleepy",        ES_FLAT,   false,     0,    0,    0,   0 },  // —_—
+  { "dead",          ES_CROSS,  false,     0,    0,    0,   0 },  // x_x
+};
+const uint8_t EXPRESSION_COUNT = sizeof(EXPRESSIONS) / sizeof(EXPRESSIONS[0]);
+
+// One eye of the given shape, centred on (cx, cy).
+void drawEyeShape(uint8_t shape, int16_t cx, int16_t cy, uint16_t col) {
+  const int16_t hw = EYE_W / 2;
+  switch (shape) {
+    case ES_CIRCLE:
+      tft.fillCircle(cx, cy, hw + 4, col);
+      break;
+    case ES_FLAT:
+      tft.fillRect(cx - hw, cy - 4, EYE_W, 8, col);
+      break;
+    case ES_CROSS:
+      for (int8_t t = -3; t <= 3; t++) {
+        tft.drawLine(cx - hw, cy - hw + t, cx + hw, cy + hw + t, col);
+        tft.drawLine(cx + hw, cy - hw + t, cx - hw, cy + hw + t, col);
+      }
+      break;
+    case ES_ARC:
+      for (int8_t t = -4; t <= 4; t++) {
+        tft.drawLine(cx - hw - 4, cy + 10 + t, cx,          cy - 10 + t, col);
+        tft.drawLine(cx,          cy - 10 + t, cx + hw + 4, cy + 10 + t, col);
+      }
+      break;
+    default:  // ES_RECT
+      tft.fillRect(cx - hw, cy - EYE_H / 2, EYE_W, EYE_H, col);
+      break;
+  }
+}
+
+// A brow sitting above an eye centred on cx. `tilt` moves the INNER end only,
+// so the same value mirrors correctly on both sides of the face.
+void drawBrow(int16_t cx, int16_t topY, int8_t tilt, bool isLeft, uint16_t col) {
+  const int16_t half  = EYE_W / 2 + 6;
+  const int16_t inner = isLeft ? cx + half : cx - half;
+  const int16_t outer = isLeft ? cx - half : cx + half;
+  for (int8_t t = 0; t < 7; t++)
+    tft.drawLine(outer, topY + t, inner, topY + tilt + t, col);
+}
+
+void drawExpression(uint8_t idx) {
+  if (idx >= EXPRESSION_COUNT) return;
+  const Expression& e = EXPRESSIONS[idx];
+  tft.fillScreen(animBgColor);
+  const int16_t cy  = eyeCY();
+  const int16_t lcx = eyeLX(e.eyeOX) + EYE_W / 2;
+  const int16_t rcx = eyeRX(e.eyeOX) + EYE_W / 2;
+  drawEyeShape(e.shape, lcx, cy, C_BLACK);
+  drawEyeShape(e.shape, rcx, cy, C_BLACK);
+  if (e.brow) {
+    const int16_t browY = cy - EYE_H / 2 - 10 - e.browLift;
+    drawBrow(lcx, browY, e.tiltL, true,  C_BLACK);
+    drawBrow(rcx, browY, e.tiltR, false, C_BLACK);
+  }
+}
+
+int8_t expressionIndex(const String& id) {
+  for (uint8_t i = 0; i < EXPRESSION_COUNT; i++)
+    if (id.equals(EXPRESSIONS[i].id)) return (int8_t)i;
+  return -1;
 }
 
 void drawCodeView() {
@@ -627,6 +723,13 @@ body{background:#1c1c20;font-family:'Courier New',monospace;color:#e8e4dc;
 
 /* View grid */
 .vgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;max-width:390px}
+.fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;width:100%;max-width:390px}
+.fbtn{background:#252428;border:1.5px solid #38343a;border-radius:10px;
+      padding:8px 2px;cursor:pointer;text-align:center;color:#e8e4dc;font:inherit}
+.fbtn:active{transform:scale(.94)}
+.fbtn .fi{font-size:15px;display:block;line-height:1;color:#c96a3e;margin-bottom:3px}
+.fbtn .fn{font-size:8px;color:#8a8278;letter-spacing:.3px}
+.fbtn.active{border-color:#c96a3e;background:#201408}
 .vbtn{background:#252428;border:1.5px solid #38343a;border-radius:12px;
   color:#d8d4cc;font-family:'Courier New',monospace;
   padding:14px 6px 10px;cursor:pointer;text-align:center;
@@ -729,6 +832,9 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
   </button>
 </div>
 
+<div class="sec">// faces</div>
+<div class="fgrid" id="faces"></div>
+
 <div class="sec">// speed</div>
 <div class="speed-row">
   <span class="sl">slow</span>
@@ -813,6 +919,40 @@ async function req(path) {
   catch(e) { toast('no connection', false); return false; }
 }
 
+// ── Faces ───────────────────────────────────────────────────────
+// Glyphs are UI-side only; the firmware owns the canonical list, so adding a
+// row to EXPRESSIONS[] makes a button appear here with no HTML edit.
+const FACE_GLYPH = {
+  disapproval: '&#3232;_&#3232;', skeptical: '&#8857;_&#9673;',
+  angry:       '&#9699;_&#9700;', sideeye:   '&#8212;&#8226;&#8226;',
+  alert:       'O_O',             happy:     '^_^',
+  sleepy:      '&#8212;_&#8212;',  dead:      'x_x'
+};
+
+async function loadFaces() {
+  let list;
+  try { list = (await (await fetch('/face')).json()).faces; }
+  catch(e) { return; }
+  const box = document.getElementById('faces');
+  box.innerHTML = '';
+  for (const id of list) {
+    const b = document.createElement('button');
+    b.className = 'fbtn';
+    b.dataset.f = id;
+    b.innerHTML = '<span class="fi">' + (FACE_GLYPH[id] || '&#9632;&#9632;') +
+                  '</span><span class="fn">' + id + '</span>';
+    b.onclick = () => setFace(id);
+    box.appendChild(b);
+  }
+}
+
+async function setFace(id) {
+  if (!await req('/face?f=' + encodeURIComponent(id))) return;
+  document.querySelectorAll('.fbtn').forEach(
+    b => b.classList.toggle('active', b.dataset.f === id));
+  document.querySelectorAll('.vbtn').forEach(b => b.classList.remove('active'));
+}
+
 async function waitNotBusy() {
   for (let i = 0; i < 100; i++) {
     try {
@@ -849,6 +989,7 @@ async function setView(v) {
   activeView = v;
   document.querySelectorAll('.vbtn').forEach(b =>
     b.classList.toggle('active', parseInt(b.dataset.v) === v));
+  document.querySelectorAll('.fbtn').forEach(b => b.classList.remove('active'));
   if (v === 2) {
     termOpen = true;
     document.getElementById('twrap').classList.add('open');
@@ -1005,6 +1146,7 @@ async function clearAll() {
       b.classList.remove('on'); b.classList.add('dim');
     }
   } catch(e) {}
+  loadFaces();
   // Always reset bg picker to default orange on page load
   document.getElementById('bgCol').value = '#aa4818';
   redrawCanvas('#aa4818');
@@ -1049,6 +1191,30 @@ void routeCmd() {
       animLogoReveal();
       break;
   }
+}
+
+// /face?f=<id>  — show a static expression. /face with no arg lists them,
+// so the UI can build its own buttons instead of hardcoding the set twice.
+void routeFace() {
+  if (!server.hasArg("f")) {
+    String out = "{\"faces\":[";
+    for (uint8_t i = 0; i < EXPRESSION_COUNT; i++) {
+      if (i) out += ",";
+      out += "\""; out += EXPRESSIONS[i].id; out += "\"";
+    }
+    out += "]}";
+    server.send(200, "application/json", out);
+    return;
+  }
+  const int8_t idx = expressionIndex(server.arg("f"));
+  if (idx < 0) { server.send(404, "application/json", "{\"e\":1}"); return; }
+
+  uiStarted   = true;
+  claudeState = CL_NONE;   // manual control overrides hook-driven state
+  termMode    = false;
+  currentView = VIEW_EXPRESSION;
+  server.send(200, "application/json", "{\"ok\":1}");
+  drawExpression((uint8_t)idx);
 }
 
 void routeChar() {
@@ -1260,6 +1426,7 @@ void setup() {
   server.on("/draw/clear",  HTTP_GET, routeDrawClear);
   server.on("/draw/stroke", HTTP_GET, routeDrawStroke);
   server.on("/backlight",   HTTP_GET, routeBacklight);
+  server.on("/face",        HTTP_GET, routeFace);
   server.on("/claude",      HTTP_GET, routeClaude);
   server.on("/state",       HTTP_GET, routeState);
   server.onNotFound(routeNotFound);

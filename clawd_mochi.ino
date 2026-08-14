@@ -96,6 +96,37 @@ uint8_t  claudeFrame   = 0;
 uint32_t claudeFrameAt = 0;   // next animation frame due
 uint32_t claudeExpires = 0;   // auto-return for transient states (0 = never)
 uint32_t nextIdleBlink = 0;
+
+// ── Expression types ──────────────────────────────────────────
+// These live up here, above the first function, because the .ino preprocessor
+// hoists auto-generated prototypes to the top of the file — a signature that
+// mentions a type defined further down won't compile.
+
+struct Expression {
+  const char* id;
+  uint8_t     shape;
+  bool        brow;
+  int8_t      tiltL;     // vertical delta of the INNER brow end, in px:
+  int8_t      tiltR;     //   + drops it toward the nose (angry), - raises it
+  int8_t      browHalf;  // half-width of the brow — match the eye to read as
+                         //   one glyph (ಠ), overhang it to read as a brow
+  int8_t      browGap;   // clearance above the eye's own top edge
+  bool        pupil;     // draw a pupil inside the ring
+  int8_t      pupilOX;   // pupil offset — this is what sells side-eye
+  uint8_t     anim;      // flourish played on entry, and on idle where it loops
+};
+
+// Everything an animation is allowed to vary about a resting face. Keeping the
+// deltas in one struct means a new motion is a new sequence of numbers rather
+// than another draw function — and every face can use every motion.
+struct FrameDelta {
+  int16_t browDY;    // raises the brow
+  int16_t pupilDX;   // slides the pupils
+  int16_t eyeDX;     // shifts both eyes horizontally
+  int16_t eyeDY;     // ...and vertically
+  int16_t radiusD;   // grows or shrinks the eye
+  bool    blink;
+};
 bool     uiStarted     = false;  // false while boot info screen is showing
 
 // ── Terminal ──────────────────────────────────────────────────
@@ -343,29 +374,22 @@ void drawSquishEyes(bool closed = false) {
 #define EX_R      34  // eye radius
 #define EX_THK     9  // stroke weight for rings, brows and strokes
 
-struct Expression {
-  const char* id;
-  uint8_t     shape;
-  bool        brow;
-  int8_t      tiltL;     // vertical delta of the INNER brow end, in px:
-  int8_t      tiltR;     //   + drops it toward the nose (angry), - raises it
-  int8_t      browHalf;  // half-width of the brow — match the eye to read as
-                         //   one glyph (ಠ), overhang it to read as a brow
-  int8_t      browGap;   // clearance above the eye's own top edge
-  bool        pupil;     // draw a pupil inside the ring
-  int8_t      pupilOX;   // pupil offset — this is what sells side-eye
-};
+// Flourishes — the motion that carries a face's meaning.
+#define AN_NONE   0
+#define AN_POP    1   // snap wide with an overshoot: the double-take
+#define AN_SHAKE  2   // damped horizontal rattle
+#define AN_DROOP  3   // sag, catch itself, sag further: nodding off
 
 const Expression EXPRESSIONS[] = {
-  //  id             shape     brow   tiltL tiltR  bHalf bGap  pupil pOX
-  { "disapproval",   ES_RING,  true,      0,    0,    38,   7,  false,  0 },  // ಠ_ಠ
-  { "skeptical",     ES_RING,  true,    -15,    8,    38,   7,  true,   0 },
-  { "angry",         ES_RING,  true,     16,   16,    40,   4,  true,   0 },
-  { "sideeye",       ES_RING,  true,      0,    0,    38,   7,  true,  15 },
-  { "alert",         ES_RING,  false,     0,    0,     0,   0,  false,  0 },  // O_O
-  { "happy",         ES_ARC,   false,     0,    0,     0,   0,  false,  0 },  // ^_^
-  { "sleepy",        ES_FLAT,  false,     0,    0,     0,   0,  false,  0 },  // —_—
-  { "dead",          ES_CROSS, false,     0,    0,     0,   0,  false,  0 },  // x_x
+  //  id             shape     brow   tiltL tiltR  bHalf bGap  pupil pOX  anim
+  { "disapproval",   ES_RING,  true,      0,    0,    38,   7,  false,  0, AN_NONE  },  // ಠ_ಠ
+  { "skeptical",     ES_RING,  true,    -15,    8,    38,   7,  true,   0, AN_NONE  },
+  { "angry",         ES_RING,  true,     16,   16,    40,   4,  true,   0, AN_NONE  },
+  { "sideeye",       ES_RING,  true,      0,    0,    38,   7,  true,  15, AN_NONE  },
+  { "alert",         ES_RING,  false,     0,    0,     0,   0,  false,  0, AN_POP   },  // O_O
+  { "happy",         ES_ARC,   false,     0,    0,     0,   0,  false,  0, AN_NONE  },  // ^_^
+  { "sleepy",        ES_FLAT,  false,     0,    0,     0,   0,  false,  0, AN_DROOP },  // —_—
+  { "dead",          ES_CROSS, false,     0,    0,     0,   0,  false,  0, AN_SHAKE },  // x_x
 };
 const uint8_t EXPRESSION_COUNT = sizeof(EXPRESSIONS) / sizeof(EXPRESSIONS[0]);
 
@@ -382,33 +406,35 @@ int16_t eyeTopExtent(uint8_t shape) {
   }
 }
 
-// One eye of the given shape, centred on (cx, cy).
-void drawEyeShape(uint8_t shape, int16_t cx, int16_t cy, uint16_t col) {
+// One eye of the given shape, centred on (cx, cy) at radius r. Radius is a
+// parameter rather than EX_R so a frame can scale the eye — that's the pop.
+void drawEyeShape(uint8_t shape, int16_t cx, int16_t cy, int16_t r, uint16_t col) {
+  if (r < EX_THK + 2) r = EX_THK + 2;
   switch (shape) {
     case ES_RING:
       // Punch the hole rather than stacking drawCircle() calls — Bresenham
       // leaves gaps in a thick ring built from concentric outlines.
-      tft.fillCircle(cx, cy, EX_R, col);
-      tft.fillCircle(cx, cy, EX_R - EX_THK, animBgColor);
+      tft.fillCircle(cx, cy, r, col);
+      tft.fillCircle(cx, cy, r - EX_THK, animBgColor);
       break;
     case ES_DISC:
-      tft.fillCircle(cx, cy, EX_R, col);
+      tft.fillCircle(cx, cy, r, col);
       break;
     case ES_FLAT:
-      tft.fillRect(cx - EX_R, cy - EX_THK / 2, EX_R * 2, EX_THK, col);
+      tft.fillRect(cx - r, cy - EX_THK / 2, r * 2, EX_THK, col);
       break;
     case ES_CROSS: {
-      const int16_t r = EX_R - 4;
+      const int16_t a = r - 4;
       for (int8_t t = -(EX_THK / 2); t <= EX_THK / 2; t++) {
-        tft.drawLine(cx - r, cy - r + t, cx + r, cy + r + t, col);
-        tft.drawLine(cx + r, cy - r + t, cx - r, cy + r + t, col);
+        tft.drawLine(cx - a, cy - a + t, cx + a, cy + a + t, col);
+        tft.drawLine(cx + a, cy - a + t, cx - a, cy + a + t, col);
       }
       break;
     }
     case ES_ARC:
       for (int8_t t = -(EX_THK / 2); t <= EX_THK / 2; t++) {
-        tft.drawLine(cx - EX_R, cy + 20 + t, cx,        cy - 20 + t, col);
-        tft.drawLine(cx,        cy - 20 + t, cx + EX_R, cy + 20 + t, col);
+        tft.drawLine(cx - r, cy + 20 + t, cx,     cy - 20 + t, col);
+        tft.drawLine(cx,     cy - 20 + t, cx + r, cy + 20 + t, col);
       }
       break;
     default:  // ES_RECT
@@ -427,24 +453,29 @@ void drawBrow(int16_t cx, int16_t topY, int8_t tilt, int8_t half,
     tft.drawLine(outer, topY + t, inner, topY + tilt + t, col);
 }
 
-// One frame of a face. The table holds the resting pose; browDY (raises the
-// brow), pupilDX (slides the pupils) and blink are the runtime deltas, so the
-// held pose and every animation frame come out of the same code path.
-void drawExpressionFrame(uint8_t idx, int16_t browDY, int16_t pupilDX, bool blink) {
+FrameDelta restDelta(const Expression& e) {
+  FrameDelta d = {0, 0, 0, 0, 0, false};
+  d.pupilDX = e.pupil ? e.pupilOX : 0;
+  return d;
+}
+
+// One frame of a face: the table's resting pose plus the deltas.
+void drawExpressionFrame(uint8_t idx, const FrameDelta& d) {
   if (idx >= EXPRESSION_COUNT) return;
   const Expression& e = EXPRESSIONS[idx];
   tft.fillScreen(animBgColor);
-  const int16_t cy  = EX_CY;
-  const int16_t lcx = DISP_W / 2 - EX_DX;
-  const int16_t rcx = DISP_W / 2 + EX_DX;
-  const uint8_t shape = blink ? ES_FLAT : e.shape;
+  const int16_t cy  = EX_CY + d.eyeDY;
+  const int16_t lcx = DISP_W / 2 - EX_DX + d.eyeDX;
+  const int16_t rcx = DISP_W / 2 + EX_DX + d.eyeDX;
+  const uint8_t shape = d.blink ? ES_FLAT : e.shape;
+  const int16_t r     = EX_R + d.radiusD;
 
-  drawEyeShape(shape, lcx, cy, C_BLACK);
-  drawEyeShape(shape, rcx, cy, C_BLACK);
-  if (e.pupil && !blink) {
-    const int16_t pr = (EX_R - EX_THK) / 2;
-    tft.fillCircle(lcx + pupilDX, cy, pr, C_BLACK);
-    tft.fillCircle(rcx + pupilDX, cy, pr, C_BLACK);
+  drawEyeShape(shape, lcx, cy, r, C_BLACK);
+  drawEyeShape(shape, rcx, cy, r, C_BLACK);
+  if (e.pupil && !d.blink) {
+    const int16_t pr = (r - EX_THK) / 2;
+    tft.fillCircle(lcx + d.pupilDX, cy, pr, C_BLACK);
+    tft.fillCircle(rcx + d.pupilDX, cy, pr, C_BLACK);
   }
   if (e.brow) {
     // Anchor to the top of the eye, then rise by the tilt so an angled brow
@@ -453,7 +484,7 @@ void drawExpressionFrame(uint8_t idx, int16_t browDY, int16_t pupilDX, bool blin
     const int tilt = (e.tiltL > e.tiltR) ? e.tiltL : e.tiltR;
     const int lift = (tilt > 0) ? tilt : 0;
     const int16_t browY = cy - eyeTopExtent(e.shape) - e.browGap
-                             - EX_THK - lift - browDY;
+                             - EX_THK - lift - d.browDY;
     drawBrow(lcx, browY, e.tiltL, e.browHalf, true,  C_BLACK);
     drawBrow(rcx, browY, e.tiltR, e.browHalf, false, C_BLACK);
   }
@@ -461,36 +492,77 @@ void drawExpressionFrame(uint8_t idx, int16_t browDY, int16_t pupilDX, bool blin
 
 void drawExpression(uint8_t idx) {
   if (idx >= EXPRESSION_COUNT) return;
-  drawExpressionFrame(idx, 0, EXPRESSIONS[idx].pupilOX, false);
+  drawExpressionFrame(idx, restDelta(EXPRESSIONS[idx]));
 }
 
-// Entry animation. Each face animates the thing that carries its meaning: the
-// brow drops into place, then the pupils slide over. A face whose brow does
-// the work gets a slam; side-eye gets the glance.
+// Play a delta sequence. `field` picks which delta the numbers drive, so all
+// three flourishes below are one loop with different data.
+void playSeq(uint8_t idx, const FrameDelta& base, uint8_t field,
+             const int16_t* seq, uint8_t n, uint16_t ms) {
+  for (uint8_t i = 0; i < n; i++) {
+    FrameDelta f = base;
+    switch (field) {
+      case 0: f.eyeDX   = seq[i]; break;
+      case 1: f.eyeDY   = seq[i]; break;
+      default: f.radiusD = seq[i]; break;
+    }
+    drawExpressionFrame(idx, f);
+    delay(speedMs(ms));
+    server.handleClient();   // long flourishes shouldn't stall the web UI
+  }
+}
+
+// Per-face flourish — the motion that IS the expression.
+void animFlourish(uint8_t idx, const FrameDelta& base) {
+  static const int16_t POP[]   = { -18, -11, 7, 2, 0 };            // snap wide, overshoot, settle
+  static const int16_t SHAKE[] = { -8, 8, -6, 6, -4, 4, -2, 0 };   // rattle, damped
+  static const int16_t DROOP[] = { -9, -5, 0, 5, 9, 4, 8, 11, 6, 0 };  // sag, catch it, sag again
+
+  switch (EXPRESSIONS[idx].anim) {
+    case AN_POP:   playSeq(idx, base, 2, POP,   5,  55); break;
+    case AN_SHAKE: playSeq(idx, base, 0, SHAKE, 8,  42); break;
+    case AN_DROOP: playSeq(idx, base, 1, DROOP, 10, 145); break;
+    default: break;
+  }
+}
+
+// Entry animation. The brow drops into place, then the pupils slide over, then
+// the face's own flourish plays, then a blink settles it.
 void animExpression(uint8_t idx) {
   if (idx >= EXPRESSION_COUNT) return;
   const Expression& e = EXPRESSIONS[idx];
-  const int16_t target = e.pupil ? e.pupilOX : 0;
+  const FrameDelta rest = restDelta(e);
 
   if (e.brow) {
-    for (int16_t d = 20; d > 0; d -= 5) {
-      drawExpressionFrame(idx, d, 0, false);   // pupils stay centred until the brow lands
+    for (int16_t b = 20; b > 0; b -= 5) {
+      FrameDelta f = rest;
+      f.browDY = b; f.pupilDX = 0;   // pupils stay centred until the brow lands
+      drawExpressionFrame(idx, f);
       delay(speedMs(45));
     }
   }
-  if (target != 0) {
+  if (rest.pupilDX != 0) {
     // Pupils start centred and slide — the glance is the whole joke.
-    const int16_t step = target > 0 ? 3 : -3;
-    for (int16_t p = 0; abs(p) < abs(target); p += step) {
-      drawExpressionFrame(idx, 0, p, false);
+    const int16_t step = rest.pupilDX > 0 ? 3 : -3;
+    for (int16_t p = 0; abs(p) < abs(rest.pupilDX); p += step) {
+      FrameDelta f = rest; f.pupilDX = p;
+      drawExpressionFrame(idx, f);
       delay(speedMs(55));
     }
   }
-  drawExpressionFrame(idx, 0, target, false);
-  delay(speedMs(140));
-  drawExpressionFrame(idx, 0, target, true);
-  delay(speedMs(95));
-  drawExpressionFrame(idx, 0, target, false);
+
+  animFlourish(idx, rest);
+  drawExpressionFrame(idx, rest);
+
+  // A flat bar blinking to a flat bar is an invisible change but a visible
+  // full-screen flicker, so faces already drawn flat skip the settle-blink.
+  if (e.shape != ES_FLAT) {
+    delay(speedMs(140));
+    FrameDelta b = rest; b.blink = true;
+    drawExpressionFrame(idx, b);
+    delay(speedMs(95));
+    drawExpressionFrame(idx, rest);
+  }
 }
 
 int8_t expressionIndex(const String& id) {
@@ -733,15 +805,20 @@ void claudeTick() {
       drawNormalEyes(0, true); delay(90); drawNormalEyes(0, false);
       nextIdleBlink = millis() + 3000 + random(5000);
     }
-    // A held expression keeps breathing too. Faces already drawn as a flat bar
-    // are skipped — blinking them is an invisible change but a visible flicker.
+    // A held expression keeps breathing too — a face with its own flourish
+    // replays that instead of blinking, since the motion is the character.
     if (uiStarted && currentView == VIEW_EXPRESSION && !busy && !termMode
-        && EXPRESSIONS[currentExpr].shape != ES_FLAT
         && millis() > nextIdleBlink) {
-      const int16_t pox = EXPRESSIONS[currentExpr].pupil
-                        ? EXPRESSIONS[currentExpr].pupilOX : 0;
-      drawExpressionFrame(currentExpr, 0, pox, true);  delay(90);
-      drawExpressionFrame(currentExpr, 0, pox, false);
+      const Expression& e = EXPRESSIONS[currentExpr];
+      const FrameDelta rest = restDelta(e);
+      if (e.anim != AN_NONE) {
+        animFlourish(currentExpr, rest);
+        drawExpressionFrame(currentExpr, rest);
+      } else if (e.shape != ES_FLAT) {
+        FrameDelta b = rest; b.blink = true;
+        drawExpressionFrame(currentExpr, b); delay(90);
+        drawExpressionFrame(currentExpr, rest);
+      }
       nextIdleBlink = millis() + 3000 + random(5000);
     }
     return;

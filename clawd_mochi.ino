@@ -328,10 +328,19 @@ void drawSquishEyes(bool closed = false) {
 // one row in EXPRESSIONS[], not another draw function.
 
 #define ES_RECT   0   // tall filled bar — the default open eye
-#define ES_CIRCLE 1   // filled disc
+#define ES_RING   1   // hollow circle — the ಠ eye; the visible white is the point
 #define ES_FLAT   2   // thin horizontal slit
 #define ES_CROSS  3   // X
 #define ES_ARC    4   // ^ chevron
+#define ES_DISC   5   // filled disc
+
+// Expression faces get their own geometry rather than reusing the EYE_*
+// constants. Those describe a tall 30x60 eye sitting high on the panel, which
+// suits the idle crab but leaves a round eye looking small and off-centre.
+#define EX_CY    116  // vertical centre of the eye pair
+#define EX_DX     52  // eye centre offset from screen centre
+#define EX_R      34  // eye radius
+#define EX_THK     9  // stroke weight for rings, brows and strokes
 
 struct Expression {
   const char* id;
@@ -339,58 +348,81 @@ struct Expression {
   bool        brow;
   int8_t      tiltL;     // vertical delta of the INNER brow end, in px:
   int8_t      tiltR;     //   + drops it toward the nose (angry), - raises it
-  int8_t      browLift;  // extra px of clearance above the eye
-  int8_t      eyeOX;     // horizontal shove, for side-eye
+  int8_t      browHalf;  // half-width of the brow — match the eye to read as
+                         //   one glyph (ಠ), overhang it to read as a brow
+  int8_t      browGap;   // clearance above the eye's own top edge
+  bool        pupil;     // draw a pupil inside the ring
+  int8_t      pupilOX;   // pupil offset — this is what sells side-eye
 };
 
 const Expression EXPRESSIONS[] = {
-  //  id             shape      brow   tiltL tiltR  lift  ox
-  { "disapproval",   ES_CIRCLE, true,      0,    0,    6,   0 },  // ಠ_ಠ
-  { "skeptical",     ES_CIRCLE, true,    -11,    5,    6,   0 },  // one up, one down
-  { "angry",         ES_RECT,   true,     11,   11,    4,   0 },
-  { "sideeye",       ES_RECT,   true,      0,    0,    4,  16 },
-  { "alert",         ES_CIRCLE, false,     0,    0,    0,   0 },  // O_O
-  { "happy",         ES_ARC,    false,     0,    0,    0,   0 },  // ^_^
-  { "sleepy",        ES_FLAT,   false,     0,    0,    0,   0 },  // —_—
-  { "dead",          ES_CROSS,  false,     0,    0,    0,   0 },  // x_x
+  //  id             shape     brow   tiltL tiltR  bHalf bGap  pupil pOX
+  { "disapproval",   ES_RING,  true,      0,    0,    38,   7,  false,  0 },  // ಠ_ಠ
+  { "skeptical",     ES_RING,  true,    -15,    8,    38,   7,  true,   0 },
+  { "angry",         ES_RING,  true,     16,   16,    40,   4,  true,   0 },
+  { "sideeye",       ES_RING,  true,      0,    0,    38,   7,  true,  15 },
+  { "alert",         ES_RING,  false,     0,    0,     0,   0,  false,  0 },  // O_O
+  { "happy",         ES_ARC,   false,     0,    0,     0,   0,  false,  0 },  // ^_^
+  { "sleepy",        ES_FLAT,  false,     0,    0,     0,   0,  false,  0 },  // —_—
+  { "dead",          ES_CROSS, false,     0,    0,     0,   0,  false,  0 },  // x_x
 };
 const uint8_t EXPRESSION_COUNT = sizeof(EXPRESSIONS) / sizeof(EXPRESSIONS[0]);
 
+// How far the shape reaches above its centre — lets a brow sit tight against
+// whatever it's drawn over instead of floating at one fixed height.
+int16_t eyeTopExtent(uint8_t shape) {
+  switch (shape) {
+    case ES_RING:
+    case ES_DISC:  return EX_R;
+    case ES_FLAT:  return EX_THK / 2;
+    case ES_CROSS: return EX_R;
+    case ES_ARC:   return 22;
+    default:       return EYE_H / 2;   // ES_RECT
+  }
+}
+
 // One eye of the given shape, centred on (cx, cy).
 void drawEyeShape(uint8_t shape, int16_t cx, int16_t cy, uint16_t col) {
-  const int16_t hw = EYE_W / 2;
   switch (shape) {
-    case ES_CIRCLE:
-      tft.fillCircle(cx, cy, hw + 4, col);
+    case ES_RING:
+      // Punch the hole rather than stacking drawCircle() calls — Bresenham
+      // leaves gaps in a thick ring built from concentric outlines.
+      tft.fillCircle(cx, cy, EX_R, col);
+      tft.fillCircle(cx, cy, EX_R - EX_THK, animBgColor);
+      break;
+    case ES_DISC:
+      tft.fillCircle(cx, cy, EX_R, col);
       break;
     case ES_FLAT:
-      tft.fillRect(cx - hw, cy - 4, EYE_W, 8, col);
+      tft.fillRect(cx - EX_R, cy - EX_THK / 2, EX_R * 2, EX_THK, col);
       break;
-    case ES_CROSS:
-      for (int8_t t = -3; t <= 3; t++) {
-        tft.drawLine(cx - hw, cy - hw + t, cx + hw, cy + hw + t, col);
-        tft.drawLine(cx + hw, cy - hw + t, cx - hw, cy + hw + t, col);
+    case ES_CROSS: {
+      const int16_t r = EX_R - 4;
+      for (int8_t t = -(EX_THK / 2); t <= EX_THK / 2; t++) {
+        tft.drawLine(cx - r, cy - r + t, cx + r, cy + r + t, col);
+        tft.drawLine(cx + r, cy - r + t, cx - r, cy + r + t, col);
       }
       break;
+    }
     case ES_ARC:
-      for (int8_t t = -4; t <= 4; t++) {
-        tft.drawLine(cx - hw - 4, cy + 10 + t, cx,          cy - 10 + t, col);
-        tft.drawLine(cx,          cy - 10 + t, cx + hw + 4, cy + 10 + t, col);
+      for (int8_t t = -(EX_THK / 2); t <= EX_THK / 2; t++) {
+        tft.drawLine(cx - EX_R, cy + 20 + t, cx,        cy - 20 + t, col);
+        tft.drawLine(cx,        cy - 20 + t, cx + EX_R, cy + 20 + t, col);
       }
       break;
     default:  // ES_RECT
-      tft.fillRect(cx - hw, cy - EYE_H / 2, EYE_W, EYE_H, col);
+      tft.fillRect(cx - EYE_W / 2, cy - EYE_H / 2, EYE_W, EYE_H, col);
       break;
   }
 }
 
-// A brow sitting above an eye centred on cx. `tilt` moves the INNER end only,
-// so the same value mirrors correctly on both sides of the face.
-void drawBrow(int16_t cx, int16_t topY, int8_t tilt, bool isLeft, uint16_t col) {
-  const int16_t half  = EYE_W / 2 + 6;
+// A brow above an eye centred on cx. `tilt` moves the INNER end only, so one
+// value mirrors correctly across the face.
+void drawBrow(int16_t cx, int16_t topY, int8_t tilt, int8_t half,
+              bool isLeft, uint16_t col) {
   const int16_t inner = isLeft ? cx + half : cx - half;
   const int16_t outer = isLeft ? cx - half : cx + half;
-  for (int8_t t = 0; t < 7; t++)
+  for (int8_t t = 0; t < EX_THK; t++)
     tft.drawLine(outer, topY + t, inner, topY + tilt + t, col);
 }
 
@@ -398,15 +430,24 @@ void drawExpression(uint8_t idx) {
   if (idx >= EXPRESSION_COUNT) return;
   const Expression& e = EXPRESSIONS[idx];
   tft.fillScreen(animBgColor);
-  const int16_t cy  = eyeCY();
-  const int16_t lcx = eyeLX(e.eyeOX) + EYE_W / 2;
-  const int16_t rcx = eyeRX(e.eyeOX) + EYE_W / 2;
+  const int16_t cy  = EX_CY;
+  const int16_t lcx = DISP_W / 2 - EX_DX;
+  const int16_t rcx = DISP_W / 2 + EX_DX;
   drawEyeShape(e.shape, lcx, cy, C_BLACK);
   drawEyeShape(e.shape, rcx, cy, C_BLACK);
+  if (e.pupil) {
+    const int16_t pr = (EX_R - EX_THK) / 2;
+    tft.fillCircle(lcx + e.pupilOX, cy, pr, C_BLACK);
+    tft.fillCircle(rcx + e.pupilOX, cy, pr, C_BLACK);
+  }
   if (e.brow) {
-    const int16_t browY = cy - EYE_H / 2 - 10 - e.browLift;
-    drawBrow(lcx, browY, e.tiltL, true,  C_BLACK);
-    drawBrow(rcx, browY, e.tiltR, false, C_BLACK);
+    // Anchor to the top of the eye, then rise by the tilt so an angled brow
+    // never clips into the eye it belongs to.
+    const int tilt = (e.tiltL > e.tiltR) ? e.tiltL : e.tiltR;
+    const int lift = (tilt > 0) ? tilt : 0;
+    const int16_t browY = cy - eyeTopExtent(e.shape) - e.browGap - EX_THK - lift;
+    drawBrow(lcx, browY, e.tiltL, e.browHalf, true,  C_BLACK);
+    drawBrow(rcx, browY, e.tiltR, e.browHalf, false, C_BLACK);
   }
 }
 

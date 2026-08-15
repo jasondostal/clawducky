@@ -34,6 +34,13 @@ older than 15 minutes greys out and says so, so a stale number never passes as
 current. Optionally the two bars pin to the bottom of any face view, so you get
 usage *and* the duck.
 
+**Cycling.** Every cycle-able view has a checkbox, so you choose what's in the
+rotation. With `stats every other` on, the meter takes every second slot — it
+keeps half the airtime no matter how many faces you've ticked, which is the
+point of having it at all. Picking anything by hand stops the rotation, on the
+theory that choosing a thing to look at and then having it yanked away is the
+display arguing with you.
+
 **Reacts to your session.** A Claude Code `Stop` hook pushes fresh numbers each
 time Claude finishes a turn, and can pull a face while it's at it — a fixed one,
 or a different random one every turn.
@@ -180,7 +187,9 @@ Everything is a `GET`, so you can drive the whole thing with `curl`.
 | `/meter?...&stop=1` | ...and signal a finished turn |
 | `/meter/view` | Switch to the full usage readout |
 | `/meter/overlay?on=0\|1` | Pin the quota bars to the bottom of face views |
-| `/meter/cycle?on=0\|1&sec=N&random=0\|1` | Alternate face ↔ usage |
+| `/meter/cycle?on=0\|1&sec=N` | Rotate through the ticked views every N seconds |
+| `/meter/cycle?item=<key>&on=0\|1` | Add/remove a view: `eyes`, `squish`, `meter`, or a face id |
+| `/meter/cycle?random=0\|1&mix=0\|1` | Random order; interleave the meter between faces |
 | `/stopface?mode=none\|fixed\|random&f=<id>` | What a finished turn looks like |
 | `/cmd?k=w\|s\|d\|a` | Original views: normal, squish, Claude Code, logo |
 | `/claude?e=working\|waiting\|done\|error\|idle` | Status-lamp states |

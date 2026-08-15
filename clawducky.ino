@@ -612,7 +612,9 @@ bool     mtrCycleRand = false;   // pick at random rather than in order
 #define CY_FACE0   3
 #define CY_SLOTS   (CY_FACE0 + 8)
 uint16_t cycleMask = 0xFFFF;     // everything, until told otherwise
-int8_t   cycleSlot = -1;         // where the rotation currently sits
+int8_t   cycleSlot = -1;         // last non-meter slot shown
+bool     cycleMix  = true;       // interleave the meter between faces
+bool     cycleOnMeter = false;   // which half of the interleave we're on
 
 // What the crab does when the feeder reports a finished turn. The hook stays
 // dumb — it reports the event, the device owns the reaction.
@@ -649,6 +651,7 @@ void settingsSave() {
   prefs.putUChar("sfidx",  stopFaceIdx);
   prefs.putUChar("speed",  animSpeed);
   prefs.putUShort("cycmask", cycleMask);
+  prefs.putBool ("cycmix",  cycleMix);
   prefs.end();
   settingsDirty = false;
 }
@@ -663,6 +666,7 @@ void settingsLoad() {
   stopFaceIdx  = prefs.getUChar ("sfidx",  0);
   animSpeed    = prefs.getUChar ("speed",  1);
   cycleMask    = prefs.getUShort("cycmask", 0xFFFF);
+  cycleMix     = prefs.getBool  ("cycmix",  true);
   prefs.end();
   // Clamp everything: a firmware change can shrink EXPRESSIONS[] under a
   // stored index, and a corrupt read shouldn't brick the boot.
@@ -816,20 +820,26 @@ uint8_t cycleSlotCount() {
   return n;
 }
 
-// Next enabled slot after `from`, wrapping. Returns -1 if nothing is enabled.
-int8_t cycleNextSlot(int8_t from) {
-  const uint8_t n = cycleSlotCount();
+// Next enabled slot after `from`, wrapping. -1 if nothing qualifies.
+int8_t cycleNextSlot(int8_t from, bool skipMeter) {
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < CY_SLOTS; i++)
+    if (cycleSlotEnabled(i) && !(skipMeter && i == CY_METER)) n++;
   if (n == 0) return -1;
+
   if (mtrCycleRand && n > 1) {
     int8_t pick;
     do {                                   // never repeat the current slot
       pick = (int8_t)random(CY_SLOTS);
-    } while (!cycleSlotEnabled(pick) || pick == from);
+    } while (!cycleSlotEnabled(pick) || pick == from
+             || (skipMeter && pick == CY_METER));
     return pick;
   }
   for (uint8_t step = 1; step <= CY_SLOTS; step++) {
     const int8_t c = (from + step) % CY_SLOTS;
-    if (cycleSlotEnabled(c)) return c;
+    if (!cycleSlotEnabled(c)) continue;
+    if (skipMeter && c == CY_METER) continue;
+    return c;
   }
   return -1;
 }
@@ -853,7 +863,25 @@ void meterCycleTick() {
   if (millis() < nextCycle) return;
   nextCycle = millis() + (uint32_t)mtrCycleSec * 1000UL;
 
-  const int8_t next = cycleNextSlot(cycleSlot);
+  // Interleaved: the meter takes every other slot, so it holds half the airtime
+  // no matter how many faces are in rotation. Otherwise it's just another slot.
+  if (cycleMix && cycleSlotEnabled(CY_METER)) {
+    if (!cycleOnMeter) {
+      const int8_t faces = cycleNextSlot(cycleSlot, true);
+      if (faces < 0) { showCycleSlot(CY_METER); return; }   // meter is all there is
+      cycleOnMeter = true;
+      showCycleSlot(CY_METER);
+      return;
+    }
+    cycleOnMeter = false;
+    const int8_t next = cycleNextSlot(cycleSlot, true);
+    if (next < 0) return;
+    cycleSlot = next;
+    showCycleSlot((uint8_t)next);
+    return;
+  }
+
+  const int8_t next = cycleNextSlot(cycleSlot, false);
   if (next < 0) return;          // nothing ticked; leave the display alone
   cycleSlot = next;
   showCycleSlot((uint8_t)next);
@@ -1277,7 +1305,10 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
     <input type="number" id="cySec" min="2" max="600" value="10" onchange="setCycleSec(this.value)">s
   </span>
   <span class="cysec">
-    <input type="checkbox" id="cyRnd" onchange="setCycleRand(this.checked)">random face
+    <input type="checkbox" id="cyRnd" onchange="setCycleRand(this.checked)">random order
+  </span>
+  <span class="cysec">
+    <input type="checkbox" id="cyMix" onchange="setCycleMix(this.checked)">stats every other
   </span>
 </div>
 
@@ -1499,6 +1530,10 @@ function reflectCycleOff() {
 
 async function setCycleRand(on) {
   await req('/meter/cycle?random=' + (on ? 1 : 0));
+}
+
+async function setCycleMix(on) {
+  await req('/meter/cycle?mix=' + (on ? 1 : 0));
 }
 
 // "none" and "random" are policies; anything else is a face id, which the
@@ -1737,6 +1772,7 @@ async function clearAll() {
 
     document.getElementById('cySec').value = j.cyclesec || 10;
     document.getElementById('cyRnd').checked = !!j.cyclerandom;
+    document.getElementById('cyMix').checked = !!j.cyclemix;
 
     await loadFaces();
     const sf = document.getElementById('sfSel');
@@ -1888,6 +1924,8 @@ void routeMeterCycle() {
     mtrCycleSec = constrain(server.arg("sec").toInt(), 2, 600);
   if (server.hasArg("random"))
     mtrCycleRand = server.arg("random").toInt() != 0;
+  if (server.hasArg("mix"))
+    cycleMix = server.arg("mix").toInt() != 0;
   if (server.hasArg("item")) {
     const int8_t slot = cycleSlotFor(server.arg("item"));
     if (slot >= 0) {
@@ -1908,7 +1946,8 @@ void routeMeterCycle() {
   server.send(200, "application/json",
               String("{\"cycle\":") + (mtrCycle ? "1" : "0") +
               ",\"sec\":" + String(mtrCycleSec) +
-              ",\"random\":" + (mtrCycleRand ? "1" : "0") + "}");
+              ",\"random\":" + (mtrCycleRand ? "1" : "0") +
+              ",\"mix\":" + (cycleMix ? "1" : "0") + "}");
 }
 
 // /meter/overlay?on=0|1 — with no arg, reports the current setting.
@@ -2042,6 +2081,7 @@ void routeState() {
   j += ",\"cycle\":";    j += mtrCycle     ? "true" : "false";
   j += ",\"cyclesec\":"; j += mtrCycleSec;
   j += ",\"cyclerandom\":"; j += mtrCycleRand ? "true" : "false";
+  j += ",\"cyclemix\":";    j += cycleMix     ? "true" : "false";
   j += ",\"stopmode\":\"";
   j += stopFaceMode == SF_RANDOM ? "random" : stopFaceMode == SF_FIXED ? "fixed" : "none";
   j += "\",\"stopface\":\"";  j += EXPRESSIONS[stopFaceIdx].id;  j += "\"";

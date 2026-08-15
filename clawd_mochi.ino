@@ -64,7 +64,7 @@ bool staConnected = false;
 #define EYE_OY  40    // vertical offset upward (subtracted from centre)
 
 // ── Colours ───────────────────────────────────────────────────
-uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN, C_RED;
+uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN, C_RED, C_AMBER;
 #define C_WHITE ST77XX_WHITE
 #define C_BLACK ST77XX_BLACK
 
@@ -74,6 +74,7 @@ uint16_t C_ORANGE, C_DARKBG, C_MUTED, C_GREEN, C_RED;
 #define VIEW_CODE        2
 #define VIEW_DRAW        3
 #define VIEW_EXPRESSION  4   // a static face from EXPRESSIONS[]; idle blink leaves it alone
+#define VIEW_METER       5   // full-screen usage readout
 
 uint8_t  currentView  = VIEW_EYES_NORMAL;
 uint8_t  currentExpr  = 0;   // which EXPRESSIONS[] entry VIEW_EXPRESSION is holding
@@ -278,6 +279,7 @@ void initColours() {
   C_MUTED  = tft.color565(90,  88,  86);
   C_GREEN  = tft.color565(80, 220, 130);
   C_RED    = tft.color565(190, 40, 30);
+  C_AMBER  = tft.color565(240, 170, 40);
   animBgColor = C_ORANGE;
   drawBgColor = C_ORANGE;
 }
@@ -322,6 +324,7 @@ void drawNormalEyes(int16_t ox = 0, bool blink = false) {
     tft.fillRect(lx, ey + EYE_H / 2 - 3, EYE_W, 6, C_BLACK);
     tft.fillRect(rx, ey + EYE_H / 2 - 3, EYE_W, 6, C_BLACK);
   }
+  drawMeterOverlay();
 }
 
 void drawChevron(int16_t cx, int16_t cy, int16_t arm, int16_t reach,
@@ -351,6 +354,7 @@ void drawSquishEyes(bool closed = false) {
     tft.fillRect(lx, cy - 5, EYE_W, 10, C_BLACK);
     tft.fillRect(rx, cy - 5, EYE_W, 10, C_BLACK);
   }
+  drawMeterOverlay();
 }
 
 // ── Expressions ───────────────────────────────────────────────
@@ -488,6 +492,7 @@ void drawExpressionFrame(uint8_t idx, const FrameDelta& d) {
     drawBrow(lcx, browY, e.tiltL, e.browHalf, true,  C_BLACK);
     drawBrow(rcx, browY, e.tiltR, e.browHalf, false, C_BLACK);
   }
+  drawMeterOverlay();
 }
 
 void drawExpression(uint8_t idx) {
@@ -569,6 +574,107 @@ int8_t expressionIndex(const String& id) {
   for (uint8_t i = 0; i < EXPRESSION_COUNT; i++)
     if (id.equals(EXPRESSIONS[i].id)) return (int8_t)i;
   return -1;
+}
+
+// ═════════════════════════════════════════════════════════════
+//  USAGE METER
+//  The device is a dumb readout: something upstream POSTs percentages to
+//  /meter and this draws them. It deliberately knows nothing about where the
+//  numbers come from, which keeps credentials off the device entirely.
+// ═════════════════════════════════════════════════════════════
+
+#define MTR_WARN  60   // % at which a bar turns amber
+#define MTR_CRIT  85   // ...and red
+#define MTR_STALE 900000UL   // 15 min without an update greys everything out
+
+uint8_t  mtrCtx = 0, mtrSes = 0, mtrWk = 0;   // percentages, 0-100
+uint32_t mtrSeen = 0;      // millis() of the last /meter push; 0 = never fed
+bool     mtrOverlay = false;   // pin the two bars to the bottom of other views
+
+bool meterStale() {
+  return mtrSeen == 0 || (millis() - mtrSeen) > MTR_STALE;
+}
+
+uint16_t meterColour(uint8_t pct) {
+  if (meterStale())    return C_MUTED;
+  if (pct >= MTR_CRIT) return C_RED;
+  if (pct >= MTR_WARN) return C_AMBER;
+  return C_GREEN;
+}
+
+// A labelled horizontal bar. Track always drawn so an empty bar still reads as
+// a bar rather than as a missing element.
+void drawMeterBar(int16_t x, int16_t y, int16_t w, int16_t h,
+                  uint8_t pct, const char* label) {
+  tft.setTextSize(1);
+  tft.setTextColor(meterStale() ? C_MUTED : C_WHITE);
+  tft.setCursor(x, y + (h - 8) / 2);
+  tft.print(label);
+
+  const int16_t bx = x + 20, bw = w - 20;
+  tft.fillRect(bx, y, bw, h, C_DARKBG);
+  tft.drawRect(bx, y, bw, h, C_MUTED);
+  const int16_t fill = (int32_t)(bw - 2) * (pct > 100 ? 100 : pct) / 100;
+  if (fill > 0) tft.fillRect(bx + 1, y + 1, fill, h - 2, meterColour(pct));
+}
+
+// The two quota bars, used both as the bottom-of-screen overlay and inside the
+// full meter view.
+void drawMeterBars(int16_t y) {
+  drawMeterBar(6, y,      DISP_W - 12, 14, mtrSes, "5h");
+  drawMeterBar(6, y + 18, DISP_W - 12, 14, mtrWk,  "7d");
+}
+
+// Pinned strip along the bottom. Faces occupy roughly y=60..150, so the
+// bottom 40px is free — the overlay never covers the crab.
+void drawMeterOverlay() {
+  if (!mtrOverlay || termMode) return;
+  if (currentView != VIEW_EYES_NORMAL && currentView != VIEW_EYES_SQUISH
+      && currentView != VIEW_EXPRESSION) return;
+  drawMeterBars(198);
+}
+
+void drawArc(int16_t cx, int16_t cy, int16_t r, int16_t thk,
+             float startDeg, float sweepDeg, uint16_t col) {
+  if (sweepDeg <= 0) return;
+  for (float a = startDeg; a <= startDeg + sweepDeg; a += 0.6f) {
+    const float rad = a * 0.017453293f;
+    const float c = cos(rad), s = sin(rad);
+    for (int16_t t = 0; t < thk; t++)
+      tft.drawPixel(cx + (int16_t)((r - t) * c), cy + (int16_t)((r - t) * s), col);
+  }
+}
+
+// Full-screen readout: context gets the big arc because it moves every turn and
+// decides when you lose your working state; the quotas get quiet bars because
+// they crawl.
+void drawMeterView() {
+  termMode = false;
+  tft.fillScreen(C_DARKBG);
+
+  const int16_t cx = DISP_W / 2, cy = 88, r = 62, thk = 13;
+  drawArc(cx, cy, r, thk, 135, 270, C_DARKBG);     // clear
+  drawArc(cx, cy, r, thk, 135, 270, tft.color565(38, 40, 46));   // track
+  drawArc(cx, cy, r, thk, 135, 270.0f * (mtrCtx > 100 ? 100 : mtrCtx) / 100.0f,
+          meterColour(mtrCtx));
+
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%u%%", (unsigned)mtrCtx);
+  tft.setTextSize(4);
+  tft.setTextColor(meterStale() ? C_MUTED : C_WHITE);
+  tft.setCursor(cx - (int16_t)(strlen(buf) * 12), cy - 16);
+  tft.print(buf);
+
+  tft.setTextSize(1);
+  tft.setTextColor(C_MUTED);
+  tft.setCursor(cx - 21, cy + 26);
+  tft.print("context");
+
+  if (meterStale()) {
+    tft.setCursor(cx - 33, 168);
+    tft.print("no data yet");
+  }
+  drawMeterBars(190);
 }
 
 void drawCodeView() {
@@ -970,10 +1076,11 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
 <div class="sec">// controls</div>
 <div class="ctrl">
   <button class="cbtn on" id="blBtn" onclick="toggleBL()">&#9728; display on</button>
+  <button class="cbtn dim" id="ovBtn" onclick="toggleOverlay()">&#9707; usage bars off</button>
 </div>
 
 <div class="sec">// views</div>
-<div class="vgrid">
+<div class="vgrid" id="views">
   <button class="vbtn active" data-v="0" onclick="setView(0)">
     <span class="ic">&#9632; &#9632;</span>
     <span class="nm">Normal eyes</span>
@@ -994,10 +1101,12 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
     <span class="nm">Canvas</span>
     <span class="ht">draw on display</span>
   </button>
+  <button class="vbtn" data-v="4" onclick="setMeter()">
+    <span class="ic">&#9680;</span>
+    <span class="nm">Usage</span>
+    <span class="ht">context + quota</span>
+  </button>
 </div>
-
-<div class="sec">// faces</div>
-<div class="vgrid" id="faces"></div>
 
 <div class="sec">// speed</div>
 <div class="speed-row">
@@ -1102,8 +1211,7 @@ async function loadFaces() {
   let list;
   try { list = (await (await fetch('/face')).json()).faces; }
   catch(e) { return; }
-  const box = document.getElementById('faces');
-  box.innerHTML = '';
+  const box = document.getElementById('views');
   for (const id of list) {
     const m = FACE_META[id] || ['&#9632;&#9632;', id, ''];
     const b = document.createElement('button');
@@ -1115,6 +1223,24 @@ async function loadFaces() {
     b.onclick = () => setFace(id);
     box.appendChild(b);
   }
+}
+
+async function setMeter() {
+  if (isBusy || termOpen || canvasOpen) return;
+  if (!await req('/meter/view')) return;
+  activeView = 4;
+  document.querySelectorAll('.vbtn').forEach(b =>
+    b.classList.toggle('active', parseInt(b.dataset.v) === 4));
+}
+
+let ovOn = false;
+async function toggleOverlay() {
+  ovOn = !ovOn;
+  if (!await req('/meter/overlay?on=' + (ovOn ? 1 : 0))) { ovOn = !ovOn; return; }
+  const b = document.getElementById('ovBtn');
+  b.innerHTML = ovOn ? '\u25FB usage bars on' : '\u25FB usage bars off';
+  b.classList.toggle('on', ovOn);
+  b.classList.toggle('dim', !ovOn);
 }
 
 async function setFace(id) {
@@ -1392,6 +1518,43 @@ void routeFace() {
   nextIdleBlink = millis() + 3000 + random(5000);
 }
 
+// /meter?ctx=&session=&week=  — any subset; omitted values keep their last
+// reading, so a feeder that only has some numbers can still push what it has.
+void routeMeter() {
+  bool got = false;
+  if (server.hasArg("ctx"))     { mtrCtx = constrain(server.arg("ctx").toInt(),     0, 100); got = true; }
+  if (server.hasArg("session")) { mtrSes = constrain(server.arg("session").toInt(), 0, 100); got = true; }
+  if (server.hasArg("week"))    { mtrWk  = constrain(server.arg("week").toInt(),    0, 100); got = true; }
+  if (got) mtrSeen = millis();
+
+  server.send(200, "application/json", "{\"ok\":1}");
+  if (!got) return;
+  if (currentView == VIEW_METER)   drawMeterView();
+  else if (mtrOverlay && !termMode) drawMeterOverlay();
+}
+
+// /meter/view — switch the display to the full usage readout.
+void routeMeterView() {
+  uiStarted   = true;
+  claudeState = CL_NONE;
+  termMode    = false;
+  currentView = VIEW_METER;
+  server.send(200, "application/json", "{\"ok\":1}");
+  drawMeterView();
+}
+
+// /meter/overlay?on=0|1 — with no arg, reports the current setting.
+void routeMeterOverlay() {
+  if (server.hasArg("on")) {
+    mtrOverlay = server.arg("on").toInt() != 0;
+    if (currentView == VIEW_EXPRESSION)        drawExpression(currentExpr);
+    else if (currentView == VIEW_EYES_NORMAL)  drawNormalEyes();
+    else if (currentView == VIEW_EYES_SQUISH)  drawSquishEyes();
+  }
+  server.send(200, "application/json",
+              String("{\"overlay\":") + (mtrOverlay ? "1" : "0") + "}");
+}
+
 void routeChar() {
   if (!termMode) { server.send(200, "application/json", "{\"ok\":1}"); return; }
   const String val = server.arg("c");
@@ -1602,6 +1765,9 @@ void setup() {
   server.on("/draw/stroke", HTTP_GET, routeDrawStroke);
   server.on("/backlight",   HTTP_GET, routeBacklight);
   server.on("/face",        HTTP_GET, routeFace);
+  server.on("/meter",       HTTP_GET, routeMeter);
+  server.on("/meter/view",  HTTP_GET, routeMeterView);
+  server.on("/meter/overlay", HTTP_GET, routeMeterOverlay);
   server.on("/claude",      HTTP_GET, routeClaude);
   server.on("/state",       HTTP_GET, routeState);
   server.onNotFound(routeNotFound);

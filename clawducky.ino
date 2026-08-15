@@ -770,8 +770,10 @@ void drawMeterView() {
 // crab alternates between the meter and whatever face the last turn produced.
 void triggerStopFace() {
   if (stopFaceMode == SF_NONE || termMode || busy) return;
-  const uint8_t idx = (stopFaceMode == SF_RANDOM)
-                    ? (uint8_t)random(EXPRESSION_COUNT) : stopFaceIdx;
+  const int8_t sel = (stopFaceMode == SF_RANDOM)
+                   ? randomStopFace() : (int8_t)stopFaceIdx;
+  if (sel < 0) return;               // nothing to draw from; leave the screen be
+  const uint8_t idx = (uint8_t)sel;
   // A finished turn is reason enough to take over the boot info screen; don't
   // gate on uiStarted the way the idle animations do.
   uiStarted   = true;
@@ -796,6 +798,23 @@ void stopCycling() {
 bool cycleSlotEnabled(uint8_t slot) {
   if (slot >= CY_FACE0 && (slot - CY_FACE0) >= EXPRESSION_COUNT) return false;
   return cycleMask & (1 << slot);
+}
+
+// A random stop face draws from the same ticks as the rotation. Unticking a
+// face means "don't show me this one", and a face the stop hook picks lands on
+// the display just as hard as one the cycle picks — drawing from the whole
+// table regardless made a carefully pruned tick list look like it did nothing.
+// A fixed choice is an explicit pick and stands whether or not it's ticked.
+// -1 when no face is ticked: the turn just updates the numbers.
+int8_t randomStopFace() {
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < EXPRESSION_COUNT; i++)
+    if (cycleSlotEnabled(CY_FACE0 + i)) n++;
+  if (n == 0) return -1;
+  uint8_t pick = (uint8_t)random(n);
+  for (uint8_t i = 0; i < EXPRESSION_COUNT; i++)
+    if (cycleSlotEnabled(CY_FACE0 + i) && pick-- == 0) return (int8_t)i;
+  return -1;
 }
 
 // "eyes" | "squish" | "meter" | any expression id  ->  slot index, or -1.
@@ -1318,25 +1337,26 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
   <span class="cysec">show
     <select id="sfSel" onchange="setStopFace(this.value)">
       <option value="none">nothing</option>
-      <option value="random">a random face</option>
+      <option value="random">a random ticked face</option>
     </select>
   </span>
 </div>
 
-<!-- The corner ticks are the only thing that decides what the rotation shows;
-     highlighting a view picks what's on screen NOW and says nothing about the
-     cycle. Spelled out because a title= tooltip is invisible on a phone. -->
-<div class="sec">// views <span class="hint">&#8212; corner tick = in the cycle</span></div>
+<!-- The corner ticks are the only thing that decides what the duck may put on
+     screen by itself — the cycle's rotation and the random stop face both draw
+     from them. Highlighting a view picks what's on screen NOW and says nothing
+     about either. Spelled out because a title= tooltip is invisible on a phone. -->
+<div class="sec">// views <span class="hint">&#8212; corner tick = duck may show this</span></div>
 <div class="vgrid" id="views">
   <button class="vbtn active" data-v="0" onclick="setView(0)">
-    <input type="checkbox" class="cyk" data-cy="eyes" title="include in cycle"
+    <input type="checkbox" class="cyk" data-cy="eyes" title="duck may show this"
            onclick="event.stopPropagation()" onchange="setCycleItem('eyes',this.checked)">
     <span class="ic">&#9632; &#9632;</span>
     <span class="nm">Normal eyes</span>
     <span class="ht">wiggle + blink</span>
   </button>
   <button class="vbtn" data-v="1" onclick="setView(1)">
-    <input type="checkbox" class="cyk" data-cy="squish" title="include in cycle"
+    <input type="checkbox" class="cyk" data-cy="squish" title="duck may show this"
            onclick="event.stopPropagation()" onchange="setCycleItem('squish',this.checked)">
     <span class="ic">&gt; &lt;</span>
     <span class="nm">Squish eyes</span>
@@ -1353,7 +1373,7 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
     <span class="ht">draw on display</span>
   </button>
   <button class="vbtn" data-v="5" onclick="setMeter()">
-    <input type="checkbox" class="cyk" data-cy="meter" title="include in cycle"
+    <input type="checkbox" class="cyk" data-cy="meter" title="duck may show this"
            onclick="event.stopPropagation()" onchange="setCycleItem('meter',this.checked)">
     <span class="ic">&#9680;</span>
     <span class="nm">Usage</span>
@@ -1476,7 +1496,7 @@ async function loadFaces() {
     b.className = 'vbtn';
     b.dataset.f = id;
     b.innerHTML =
-      '<input type="checkbox" class="cyk" data-cy="' + id + '" title="include in cycle" ' +
+      '<input type="checkbox" class="cyk" data-cy="' + id + '" title="duck may show this" ' +
         'onclick="event.stopPropagation()" ' +
         'onchange="setCycleItem(\'' + id + '\',this.checked)">' +
       '<span class="ic">' + m[0] + '</span>' +

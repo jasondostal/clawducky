@@ -188,9 +188,9 @@ Everything is a `GET`, so you can drive the whole thing with `curl`.
 | `/meter/view` | Switch to the full usage readout |
 | `/meter/overlay?on=0\|1` | Pin the quota bars to the bottom of face views |
 | `/meter/cycle?on=0\|1&sec=N` | Rotate through the ticked views every N seconds |
-| `/meter/cycle?item=<key>&on=0\|1` | Add/remove a view: `eyes`, `squish`, `meter`, or a face id |
+| `/meter/cycle?item=<key>&on=0\|1` | Tick/untick a view: `eyes`, `squish`, `meter`, or a face id |
 | `/meter/cycle?random=0\|1&mix=0\|1` | Random order; interleave the meter between faces |
-| `/stopface?mode=none\|fixed\|random&f=<id>` | What a finished turn looks like |
+| `/stopface?mode=none\|fixed\|random&f=<id>` | What a finished turn looks like; `random` draws from the ticks |
 | `/cmd?k=w\|s\|d\|a` | Original views: normal, squish, Claude Code, logo |
 | `/claude?e=working\|waiting\|done\|error\|idle` | Status-lamp states |
 | `/speed?v=1\|2\|3` | Animation speed |

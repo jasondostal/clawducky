@@ -115,7 +115,7 @@ configured on the duck, not in the hook — the hook reports an event, the devic
 owns the reaction:
 
 ```sh
-curl 'http://clawducky.local/stopface?mode=random'              # a different face each turn
+curl 'http://clawducky.local/stopface?mode=random'              # a different ticked face each turn
 curl 'http://clawducky.local/stopface?mode=fixed&f=disapproval' # always the same one
 curl 'http://clawducky.local/stopface?mode=none'                # just update the numbers
 ```
@@ -123,6 +123,10 @@ curl 'http://clawducky.local/stopface?mode=none'                # just update th
 Also settable from the `// on stop` picker in the web UI. `random` is the fun
 one: a fixed face stops registering after a day, but a rotating one reads as
 the duck having moods.
+
+`random` draws from the same corner ticks as the cycle, so unticking a face
+takes it out of both — with no face ticked, a finished turn just updates the
+numbers. `fixed` is an explicit choice and shows whether or not it's ticked.
 
 Whatever face a turn produces also becomes the auto-cycle's home face, so a
 cycling duck alternates between the usage screen and the most recent reaction

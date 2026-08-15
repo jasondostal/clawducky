@@ -26,7 +26,7 @@ import time
 import urllib.error
 import urllib.request
 
-HOST = os.environ.get("CLAWD_HOST", "clawd.local")
+HOST = os.environ.get("CLAWD_HOST", "clawducky.local")
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 CACHE = "/tmp/.clawd-usage-cache.json"
 CACHE_TTL = 60          # seconds; quota crawls, no need to poll every turn

@@ -4,7 +4,7 @@ clawducky can act as a physical Claude Code status lamp and a live usage
 readout. Both are driven by hooks. Requires station mode (see
 `wifi_credentials.h.example`) so the device is reachable on your LAN.
 
-If `clawd.local` doesn't resolve — mDNS doesn't cross VLANs — use the IP and
+If `clawducky.local` doesn't resolve — mDNS doesn't cross VLANs — use the IP and
 set `CLAWD_HOST` for the feeder.
 
 ## Endpoint
@@ -22,9 +22,9 @@ set `CLAWD_HOST` for the feeder.
 Test from the Mac:
 
 ```sh
-curl 'http://clawd.local/claude?e=working'
-curl 'http://clawd.local/claude?e=done'
-curl 'http://clawd.local/state'   # includes claude/sta/ip fields
+curl 'http://clawducky.local/claude?e=working'
+curl 'http://clawducky.local/claude?e=done'
+curl 'http://clawducky.local/state'   # includes claude/sta/ip fields
 ```
 
 ## Hooks config
@@ -36,16 +36,16 @@ Merge into `~/.claude/settings.json`. Each command backgrounds a curl with a
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "(curl -sm2 'http://clawd.local/claude?e=working' >/dev/null 2>&1 &)" }] }
+      { "hooks": [{ "type": "command", "command": "(curl -sm2 'http://clawducky.local/claude?e=working' >/dev/null 2>&1 &)" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "(curl -sm2 'http://clawd.local/claude?e=done' >/dev/null 2>&1 &)" }] }
+      { "hooks": [{ "type": "command", "command": "(curl -sm2 'http://clawducky.local/claude?e=done' >/dev/null 2>&1 &)" }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "(curl -sm2 'http://clawd.local/claude?e=waiting' >/dev/null 2>&1 &)" }] }
+      { "hooks": [{ "type": "command", "command": "(curl -sm2 'http://clawducky.local/claude?e=waiting' >/dev/null 2>&1 &)" }] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "(curl -sm2 'http://clawd.local/claude?e=idle' >/dev/null 2>&1 &)" }] }
+      { "hooks": [{ "type": "command", "command": "(curl -sm2 'http://clawducky.local/claude?e=idle' >/dev/null 2>&1 &)" }] }
     ]
   }
 }
@@ -80,7 +80,7 @@ Add to the same `Stop` block as the status hook:
 ```json
 "Stop": [
   { "hooks": [
-      { "type": "command", "command": "(curl -sm2 'http://clawd.local/claude?e=done' >/dev/null 2>&1 &)" },
+      { "type": "command", "command": "(curl -sm2 'http://clawducky.local/claude?e=done' >/dev/null 2>&1 &)" },
       { "type": "command", "command": "(~/path/to/clawducky/tools/clawducky-usage.py >/dev/null 2>&1 &)" }
   ] }
 ]
@@ -115,9 +115,9 @@ configured on the duck, not in the hook — the hook reports an event, the devic
 owns the reaction:
 
 ```sh
-curl 'http://clawd.local/stopface?mode=random'              # a different face each turn
-curl 'http://clawd.local/stopface?mode=fixed&f=disapproval' # always the same one
-curl 'http://clawd.local/stopface?mode=none'                # just update the numbers
+curl 'http://clawducky.local/stopface?mode=random'              # a different face each turn
+curl 'http://clawducky.local/stopface?mode=fixed&f=disapproval' # always the same one
+curl 'http://clawducky.local/stopface?mode=none'                # just update the numbers
 ```
 
 Also settable from the `// on stop` picker in the web UI. `random` is the fun

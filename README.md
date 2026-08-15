@@ -3,6 +3,8 @@
 A rubber duck with claws. It sits on your desk, pulls faces at you, and tells
 you how much Claude you have left.
 
+![clawducky showing its face with live quota bars along the bottom](docs/clawducky-overlay.jpg)
+
 An ESP32-C3 driving a 240×240 IPS panel. It shows animated expressions, and it
 shows a live readout of your Claude Code usage — how full the context window
 is, and how much of your 5-hour and weekly quota you've burned. The context
@@ -23,6 +25,8 @@ squished eyes. Each animates on arrival: brows drop into place, pupils slide
 over, then a settle-blink. `alert` pops wide, `dead` shakes it off, `sleepy`
 sags and catches itself. Held faces keep blinking on an idle timer so the thing
 looks alive rather than paused.
+
+![Two modes side by side: idle eyes, and the full usage readout showing a 25% context arc over the 5h and 7d bars](docs/clawducky-modes.jpg)
 
 **Usage meter.** A context-occupancy arc over two quota bars. Green below 60%,
 amber to 85%, red above — you stop reading it and start just knowing. A feed
@@ -114,11 +118,11 @@ cp wifi_credentials.h.example wifi_credentials.h   # gitignored
 ```
 
 Fill in your SSID and password. It joins as a station and advertises
-`clawd.local` over mDNS, falling back to its own access point
-(`ClaWD-Mochi` / `clawd1234` → `192.168.4.1`) if it can't connect.
+`clawducky.local` over mDNS, falling back to its own access point
+(`clawducky` / `clawd1234` → `192.168.4.1`) if it can't connect.
 
 > mDNS doesn't cross VLANs. If the duck is on a separate IoT network from your
-> workstation, `clawd.local` won't resolve — use the IP. Pin its DHCP lease
+> workstation, `clawducky.local` won't resolve — use the IP. Pin its DHCP lease
 > while you're there, because if the address moves, everything pointing at it
 > fails silently.
 
@@ -153,7 +157,7 @@ actually changes, so nothing runs while you aren't working:
 }
 ```
 
-Set `CLAWD_HOST` if `clawd.local` doesn't resolve for you. See
+Set `CLAWD_HOST` if `clawducky.local` doesn't resolve for you. See
 [HOOKS.md](HOOKS.md) for the full setup, the status-lamp hooks, and how the
 feeder is hardened for hook use (it exits 0 unconditionally — a desk toy must
 never break your editor).

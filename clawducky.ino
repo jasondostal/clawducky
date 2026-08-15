@@ -12,8 +12,8 @@
  *     VCC → 3V3
  *     GND → GND
  *
- *   WiFi: joins home network (wifi_credentials.h) → http://clawd.local
- *         fallback hotspot "ClaWD-Mochi" pw: clawd1234 → 192.168.4.1
+ *   WiFi: joins home network (wifi_credentials.h) → http://clawducky.local
+ *         fallback hotspot "clawducky" pw: clawd1234 → 192.168.4.1
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
@@ -48,7 +48,7 @@
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 // ── WiFi ──────────────────────────────────────────────────────
-const char* AP_SSID = "ClaWD-Mochi";
+const char* AP_SSID = "clawducky";
 const char* AP_PASS = "clawd1234";
 WebServer server(80);
 bool staConnected = false;
@@ -538,6 +538,10 @@ void animExpression(uint8_t idx) {
   if (idx >= EXPRESSION_COUNT) return;
   const Expression& e = EXPRESSIONS[idx];
   const FrameDelta rest = restDelta(e);
+  // The original eye animations raise this so the web UI can grey itself out
+  // while the device is unresponsive. Ours block just as hard, so they must
+  // report it too or clicks silently vanish instead of visibly locking.
+  busy = true;
 
   if (e.brow) {
     for (int16_t b = 20; b > 0; b -= 5) {
@@ -569,6 +573,7 @@ void animExpression(uint8_t idx) {
     delay(speedMs(95));
     drawExpressionFrame(idx, rest);
   }
+  busy = false;
 }
 
 int8_t expressionIndex(const String& id) {
@@ -1237,7 +1242,7 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
     <span class="nm">Canvas</span>
     <span class="ht">draw on display</span>
   </button>
-  <button class="vbtn" data-v="4" onclick="setMeter()">
+  <button class="vbtn" data-v="5" onclick="setMeter()">
     <span class="ic">&#9680;</span>
     <span class="nm">Usage</span>
     <span class="ht">context + quota</span>
@@ -1290,6 +1295,11 @@ let activeView  = 0;
 let termOpen    = false;
 let canvasOpen  = false;
 let blOn        = true;
+// Mirror of the firmware's view constants — the UI reads /state, so these
+// have to stay in step with the #defines in the sketch.
+const VIEW_EYES_NORMAL = 0, VIEW_EYES_SQUISH = 1, VIEW_CODE = 2,
+      VIEW_DRAW = 3, VIEW_EXPRESSION = 4, VIEW_METER = 5;
+
 let isBusy      = false;
 let drawing     = false;
 let lastX = 0, lastY = 0;
@@ -1371,9 +1381,9 @@ async function loadFaces() {
 async function setMeter() {
   if (isBusy || termOpen || canvasOpen) return;
   if (!await req('/meter/view')) return;
-  activeView = 4;
+  activeView = VIEW_METER;
   document.querySelectorAll('.vbtn').forEach(b =>
-    b.classList.toggle('active', parseInt(b.dataset.v) === 4));
+    b.classList.toggle('active', parseInt(b.dataset.v) === VIEW_METER));
 }
 
 let cyOn = false;
@@ -1418,6 +1428,9 @@ async function setFace(id) {
   activeView = -1;
   document.querySelectorAll('.vbtn').forEach(
     b => b.classList.toggle('active', b.dataset.f === id));
+  setBusy(true);
+  await waitNotBusy();
+  setBusy(false);
 }
 
 async function waitNotBusy() {
@@ -1630,6 +1643,18 @@ async function clearAll() {
     await loadFaces();
     const sf = document.getElementById('sfSel');
     sf.value = j.sfmode === 'fixed' ? (j.sfface || 'none') : (j.sfmode || 'none');
+
+    // The device is the source of truth for what's on screen. Without this the
+    // UI always came back claiming "Normal eyes" no matter what was showing.
+    activeView = j.view;
+    document.querySelectorAll('.vbtn').forEach(b => b.classList.remove('active'));
+    if (j.view === VIEW_EXPRESSION) {
+      const fb = document.querySelector('.vbtn[data-f="' + j.expr + '"]');
+      if (fb) fb.classList.add('active');
+    } else {
+      const vb = document.querySelector('.vbtn[data-v="' + j.view + '"]');
+      if (vb) vb.classList.add('active');
+    }
   } catch(e) { loadFaces(); }
   // Always reset bg picker to default orange on page load
   document.getElementById('bgCol').value = '#aa4818';
@@ -1698,6 +1723,7 @@ void routeFace() {
   termMode    = false;
   currentView = VIEW_EXPRESSION;
   currentExpr = (uint8_t)idx;
+  busy        = true;
   server.send(200, "application/json", "{\"ok\":1}");
   animExpression((uint8_t)idx);
   nextIdleBlink = millis() + 3000 + random(5000);
@@ -1906,6 +1932,7 @@ void routeState() {
   j += ",\"sfmode\":\"";
   j += stopFaceMode == SF_RANDOM ? "random" : stopFaceMode == SF_FIXED ? "fixed" : "none";
   j += "\",\"sfface\":\"";  j += EXPRESSIONS[stopFaceIdx].id;  j += "\"";
+  j += ",\"expr\":\"";      j += EXPRESSIONS[currentExpr].id;  j += "\"";
   j += ",\"sta\":";    j += staConnected ? "true" : "false";
   j += ",\"ip\":\"";
   j += staConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
@@ -1965,7 +1992,7 @@ void setup() {
     Serial.print("AP up: ");  Serial.print(AP_SSID);
     Serial.print(" ip=");     Serial.println(WiFi.softAPIP());
   }
-  if (MDNS.begin("clawd")) MDNS.addService("http", "tcp", 80);
+  if (MDNS.begin("clawducky")) MDNS.addService("http", "tcp", 80);
 
   // ── WiFi info screen (stays until first web request) ───────
   tft.fillScreen(C_DARKBG);
@@ -1978,13 +2005,13 @@ void setup() {
     tft.setTextColor(C_WHITE);  tft.setTextSize(2);
     tft.setCursor(12, 68);  tft.print("Open browser:");
     tft.setTextColor(C_ORANGE); tft.setTextSize(2);
-    tft.setCursor(12, 94);  tft.print("clawd.local");
+    tft.setCursor(12, 94);  tft.print("clawducky.local");
     tft.setTextColor(C_MUTED);  tft.setTextSize(1);
     tft.setCursor(12, 124); tft.print(WiFi.localIP().toString());
     tft.setCursor(12, 140); tft.print("press any button to start");
   } else {
     tft.setTextColor(C_WHITE);  tft.setTextSize(2);
-    tft.setCursor(12, 16);  tft.print("WiFi: ClaWD-Mochi");
+    tft.setCursor(12, 16);  tft.print("WiFi: clawducky");
     tft.setTextColor(C_MUTED);  tft.setTextSize(1);
     tft.setCursor(12, 44);  tft.print("password: clawd1234");
     tft.setTextColor(C_WHITE);  tft.setTextSize(2);

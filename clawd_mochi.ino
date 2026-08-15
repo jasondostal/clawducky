@@ -24,6 +24,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <Preferences.h>
 
 // ── Home WiFi (station mode) ──────────────────────────────────
 // Copy wifi_credentials.h.example → wifi_credentials.h and fill in.
@@ -608,6 +609,54 @@ bool     mtrCycleRand = false;   // pick a fresh face each time round
 uint8_t  stopFaceMode = SF_NONE;
 uint8_t  stopFaceIdx  = 0;
 
+// ── Persistence ───────────────────────────────────────────────
+// Settings survive a power cycle. Writes are coalesced rather than immediate:
+// a slider dragged across its range would otherwise be dozens of flash writes
+// for one intent, and NVS has a finite erase budget.
+Preferences prefs;
+bool     settingsDirty = false;
+uint32_t settingsSaveAt = 0;
+
+void settingsTouch() {
+  settingsDirty  = true;
+  settingsSaveAt = millis() + 3000;
+}
+
+void settingsSave() {
+  prefs.begin("clawd", false);
+  prefs.putBool ("ovl",    mtrOverlay);
+  prefs.putBool ("cyc",    mtrCycle);
+  prefs.putUShort("cycsec", mtrCycleSec);
+  prefs.putBool ("cycrnd", mtrCycleRand);
+  prefs.putUChar("sfmode", stopFaceMode);
+  prefs.putUChar("sfidx",  stopFaceIdx);
+  prefs.putUChar("speed",  animSpeed);
+  prefs.end();
+  settingsDirty = false;
+}
+
+void settingsLoad() {
+  prefs.begin("clawd", true);
+  mtrOverlay   = prefs.getBool  ("ovl",    false);
+  mtrCycle     = prefs.getBool  ("cyc",    false);
+  mtrCycleSec  = prefs.getUShort("cycsec", 10);
+  mtrCycleRand = prefs.getBool  ("cycrnd", false);
+  stopFaceMode = prefs.getUChar ("sfmode", SF_NONE);
+  stopFaceIdx  = prefs.getUChar ("sfidx",  0);
+  animSpeed    = prefs.getUChar ("speed",  1);
+  prefs.end();
+  // Clamp everything: a firmware change can shrink EXPRESSIONS[] under a
+  // stored index, and a corrupt read shouldn't brick the boot.
+  if (stopFaceIdx >= EXPRESSION_COUNT)  stopFaceIdx = 0;
+  if (stopFaceMode > SF_RANDOM)         stopFaceMode = SF_NONE;
+  if (animSpeed < 1 || animSpeed > 3)   animSpeed = 1;
+  if (mtrCycleSec < 2 || mtrCycleSec > 600) mtrCycleSec = 10;
+}
+
+void settingsTick() {
+  if (settingsDirty && millis() > settingsSaveAt) settingsSave();
+}
+
 bool meterStale() {
   return mtrSeen == 0 || (millis() - mtrSeen) > MTR_STALE;
 }
@@ -1149,7 +1198,7 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
   <button class="cbtn dim" id="ovBtn" onclick="toggleOverlay()">&#9707; usage bars off</button>
   <button class="cbtn dim" id="cyBtn" onclick="toggleCycle()">&#8635; cycle off</button>
   <span class="cysec">every
-    <input type="number" id="cySec" min="2" max="600" value="10" oninput="setCycleSec(this.value)">s
+    <input type="number" id="cySec" min="2" max="600" value="10" onchange="setCycleSec(this.value)">s
   </span>
   <span class="cysec">
     <input type="checkbox" id="cyRnd" onchange="setCycleRand(this.checked)">random face
@@ -1564,8 +1613,24 @@ async function clearAll() {
       b.textContent = '\u25cb display off';
       b.classList.remove('on'); b.classList.add('dim');
     }
-  } catch(e) {}
-  loadFaces();
+    // Reflect persisted device settings rather than markup defaults.
+    ovOn = !!j.ovl;
+    const ob = document.getElementById('ovBtn');
+    ob.innerHTML = ovOn ? '\u25FB usage bars on' : '\u25FB usage bars off';
+    ob.classList.toggle('on', ovOn); ob.classList.toggle('dim', !ovOn);
+
+    cyOn = !!j.cyc;
+    const cb = document.getElementById('cyBtn');
+    cb.innerHTML = cyOn ? '\u21BB cycle on' : '\u21BB cycle off';
+    cb.classList.toggle('on', cyOn); cb.classList.toggle('dim', !cyOn);
+
+    document.getElementById('cySec').value = j.cycsec || 10;
+    document.getElementById('cyRnd').checked = !!j.cycrnd;
+
+    await loadFaces();
+    const sf = document.getElementById('sfSel');
+    sf.value = j.sfmode === 'fixed' ? (j.sfface || 'none') : (j.sfmode || 'none');
+  } catch(e) { loadFaces(); }
   // Always reset bg picker to default orange on page load
   document.getElementById('bgCol').value = '#aa4818';
   redrawCanvas('#aa4818');
@@ -1668,6 +1733,7 @@ void routeStopFace() {
     else if (m == "fixed")  stopFaceMode = SF_FIXED;
     else                    stopFaceMode = SF_NONE;
   }
+  settingsTouch();
   const char* mode = stopFaceMode == SF_RANDOM ? "random"
                    : stopFaceMode == SF_FIXED  ? "fixed" : "none";
   server.send(200, "application/json",
@@ -1699,6 +1765,7 @@ void routeMeterCycle() {
       nextCycle = millis() + (uint32_t)mtrCycleSec * 1000UL;
     }
   }
+  settingsTouch();
   server.send(200, "application/json",
               String("{\"cycle\":") + (mtrCycle ? "1" : "0") +
               ",\"sec\":" + String(mtrCycleSec) +
@@ -1709,6 +1776,7 @@ void routeMeterCycle() {
 void routeMeterOverlay() {
   if (server.hasArg("on")) {
     mtrOverlay = server.arg("on").toInt() != 0;
+    settingsTouch();
     if (currentView == VIEW_EXPRESSION)        drawExpression(currentExpr);
     else if (currentView == VIEW_EYES_NORMAL)  drawNormalEyes();
     else if (currentView == VIEW_EYES_SQUISH)  drawSquishEyes();
@@ -1725,7 +1793,10 @@ void routeChar() {
 }
 
 void routeSpeed() {
-  if (server.hasArg("v")) animSpeed = constrain(server.arg("v").toInt(), 1, 3);
+  if (server.hasArg("v")) {
+    animSpeed = constrain(server.arg("v").toInt(), 1, 3);
+    settingsTouch();
+  }
   server.send(200, "application/json", "{\"ok\":1}");
 }
 
@@ -1828,6 +1899,13 @@ void routeState() {
   j += ",\"bl\":";     j += backlightOn ? "true" : "false";
   j += ",\"speed\":";  j += animSpeed;
   j += ",\"claude\":"; j += claudeState;
+  j += ",\"ovl\":";    j += mtrOverlay   ? "true" : "false";
+  j += ",\"cyc\":";    j += mtrCycle     ? "true" : "false";
+  j += ",\"cycsec\":"; j += mtrCycleSec;
+  j += ",\"cycrnd\":"; j += mtrCycleRand ? "true" : "false";
+  j += ",\"sfmode\":\"";
+  j += stopFaceMode == SF_RANDOM ? "random" : stopFaceMode == SF_FIXED ? "fixed" : "none";
+  j += "\",\"sfface\":\"";  j += EXPRESSIONS[stopFaceIdx].id;  j += "\"";
   j += ",\"sta\":";    j += staConnected ? "true" : "false";
   j += ",\"ip\":\"";
   j += staConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
@@ -1852,6 +1930,7 @@ void setup() {
   tft.setSPISpeed(40000000);
   tft.setRotation(1);
   initColours();
+  settingsLoad();
 
   // ── Boot splash ────────────────────────────────────────────
   tft.fillScreen(animBgColor);
@@ -1949,4 +2028,5 @@ void loop() {
   server.handleClient();
   claudeTick();
   meterCycleTick();
+  settingsTick();
 }

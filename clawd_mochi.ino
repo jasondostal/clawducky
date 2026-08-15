@@ -598,6 +598,15 @@ uint16_t mtrCycleSec  = 10;
 uint32_t nextCycle    = 0;
 uint8_t  cycleView    = VIEW_EYES_NORMAL;   // what to return to
 uint8_t  cycleExpr    = 0;
+bool     mtrCycleRand = false;   // pick a fresh face each time round
+
+// What the crab does when the feeder reports a finished turn. The hook stays
+// dumb — it reports the event, the device owns the reaction.
+#define SF_NONE   0
+#define SF_FIXED  1
+#define SF_RANDOM 2
+uint8_t  stopFaceMode = SF_NONE;
+uint8_t  stopFaceIdx  = 0;
 
 bool meterStale() {
   return mtrSeen == 0 || (millis() - mtrSeen) > MTR_STALE;
@@ -685,6 +694,24 @@ void drawMeterView() {
   drawMeterBars(190);
 }
 
+// React to a finished turn. Also becomes the cycle's home face, so a cycling
+// crab alternates between the meter and whatever face the last turn produced.
+void triggerStopFace() {
+  if (stopFaceMode == SF_NONE || termMode || busy) return;
+  const uint8_t idx = (stopFaceMode == SF_RANDOM)
+                    ? (uint8_t)random(EXPRESSION_COUNT) : stopFaceIdx;
+  // A finished turn is reason enough to take over the boot info screen; don't
+  // gate on uiStarted the way the idle animations do.
+  uiStarted   = true;
+  claudeState = CL_NONE;
+  currentView = VIEW_EXPRESSION;
+  currentExpr = idx;
+  cycleView   = VIEW_EXPRESSION;
+  cycleExpr   = idx;
+  animExpression(idx);
+  nextIdleBlink = millis() + 3000 + random(5000);
+}
+
 // Flip between the current face and the meter. Saves whatever face was showing
 // so the cycle returns to it rather than resetting to default eyes.
 void meterCycleTick() {
@@ -695,6 +722,10 @@ void meterCycleTick() {
   nextCycle = millis() + (uint32_t)mtrCycleSec * 1000UL;
 
   if (currentView == VIEW_METER) {
+    if (mtrCycleRand) {
+      cycleView = VIEW_EXPRESSION;
+      cycleExpr = (uint8_t)random(EXPRESSION_COUNT);
+    }
     currentView = cycleView;
     currentExpr = cycleExpr;
     if      (currentView == VIEW_EXPRESSION)  drawExpression(cycleExpr);
@@ -1033,8 +1064,12 @@ body{background:#1c1c20;font-family:'Courier New',monospace;color:#e8e4dc;
 .vgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;max-width:390px}
 .cysec{font-size:10px;color:#8a8278;letter-spacing:.5px;display:inline-flex;
        align-items:center;gap:4px}
-.cysec input{width:46px;background:#252428;border:1.5px solid #38343a;border-radius:8px;
-       color:#e8e4dc;font:inherit;font-size:11px;padding:4px 6px;text-align:center}
+.cysec input[type=number]{width:46px;background:#252428;border:1.5px solid #38343a;
+       border-radius:8px;color:#e8e4dc;font:inherit;font-size:11px;padding:4px 6px;
+       text-align:center}
+.cysec input[type=checkbox]{accent-color:#c96a3e;width:14px;height:14px}
+.cysec select{background:#252428;border:1.5px solid #38343a;border-radius:8px;
+       color:#e8e4dc;font:inherit;font-size:11px;padding:4px 6px}
 .vbtn{background:#252428;border:1.5px solid #38343a;border-radius:12px;
   color:#d8d4cc;font-family:'Courier New',monospace;
   padding:14px 6px 10px;cursor:pointer;text-align:center;
@@ -1115,6 +1150,19 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
   <button class="cbtn dim" id="cyBtn" onclick="toggleCycle()">&#8635; cycle off</button>
   <span class="cysec">every
     <input type="number" id="cySec" min="2" max="600" value="10" oninput="setCycleSec(this.value)">s
+  </span>
+  <span class="cysec">
+    <input type="checkbox" id="cyRnd" onchange="setCycleRand(this.checked)">random face
+  </span>
+</div>
+
+<div class="sec">// on stop</div>
+<div class="ctrl" style="justify-content:center">
+  <span class="cysec">show
+    <select id="sfSel" onchange="setStopFace(this.value)">
+      <option value="none">nothing</option>
+      <option value="random">a random face</option>
+    </select>
   </span>
 </div>
 
@@ -1262,6 +1310,13 @@ async function loadFaces() {
     b.onclick = () => setFace(id);
     box.appendChild(b);
   }
+  const sel = document.getElementById('sfSel');
+  for (const id of list) {
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = (FACE_META[id] || [0, id])[1].toLowerCase();
+    sel.appendChild(o);
+  }
 }
 
 async function setMeter() {
@@ -1285,6 +1340,17 @@ async function toggleCycle() {
 
 async function setCycleSec(v) {
   await req('/meter/cycle?sec=' + v);
+}
+
+async function setCycleRand(on) {
+  await req('/meter/cycle?random=' + (on ? 1 : 0));
+}
+
+// "none" and "random" are policies; anything else is a face id, which the
+// device stores as the fixed choice.
+async function setStopFace(v) {
+  if (v === 'none' || v === 'random') await req('/stopface?mode=' + v);
+  else await req('/stopface?mode=fixed&f=' + encodeURIComponent(v));
 }
 
 let ovOn = false;
@@ -1581,10 +1647,32 @@ void routeMeter() {
   if (server.hasArg("week"))    { mtrWk  = constrain(server.arg("week").toInt(),    0, 100); got = true; }
   if (got) mtrSeen = millis();
 
+  const bool stop = server.hasArg("stop") && server.arg("stop").toInt() != 0;
   server.send(200, "application/json", "{\"ok\":1}");
+
+  if (stop && stopFaceMode != SF_NONE) { triggerStopFace(); return; }
   if (!got) return;
   if (currentView == VIEW_METER)   drawMeterView();
   else if (mtrOverlay && !termMode) drawMeterOverlay();
+}
+
+// /stopface?mode=none|fixed|random&f=<id> — what a finished turn looks like.
+void routeStopFace() {
+  if (server.hasArg("f")) {
+    const int8_t i = expressionIndex(server.arg("f"));
+    if (i >= 0) stopFaceIdx = (uint8_t)i;
+  }
+  if (server.hasArg("mode")) {
+    const String m = server.arg("mode");
+    if      (m == "random") stopFaceMode = SF_RANDOM;
+    else if (m == "fixed")  stopFaceMode = SF_FIXED;
+    else                    stopFaceMode = SF_NONE;
+  }
+  const char* mode = stopFaceMode == SF_RANDOM ? "random"
+                   : stopFaceMode == SF_FIXED  ? "fixed" : "none";
+  server.send(200, "application/json",
+              String("{\"mode\":\"") + mode + "\",\"face\":\"" +
+              EXPRESSIONS[stopFaceIdx].id + "\"}");
 }
 
 // /meter/view — switch the display to the full usage readout.
@@ -1601,6 +1689,8 @@ void routeMeterView() {
 void routeMeterCycle() {
   if (server.hasArg("sec"))
     mtrCycleSec = constrain(server.arg("sec").toInt(), 2, 600);
+  if (server.hasArg("random"))
+    mtrCycleRand = server.arg("random").toInt() != 0;
   if (server.hasArg("on")) {
     mtrCycle = server.arg("on").toInt() != 0;
     if (mtrCycle) {
@@ -1611,7 +1701,8 @@ void routeMeterCycle() {
   }
   server.send(200, "application/json",
               String("{\"cycle\":") + (mtrCycle ? "1" : "0") +
-              ",\"sec\":" + String(mtrCycleSec) + "}");
+              ",\"sec\":" + String(mtrCycleSec) +
+              ",\"random\":" + (mtrCycleRand ? "1" : "0") + "}");
 }
 
 // /meter/overlay?on=0|1 — with no arg, reports the current setting.
@@ -1839,6 +1930,7 @@ void setup() {
   server.on("/meter",       HTTP_GET, routeMeter);
   server.on("/meter/view",  HTTP_GET, routeMeterView);
   server.on("/meter/cycle", HTTP_GET, routeMeterCycle);
+  server.on("/stopface",    HTTP_GET, routeStopFace);
   server.on("/meter/overlay", HTTP_GET, routeMeterOverlay);
   server.on("/claude",      HTTP_GET, routeClaude);
   server.on("/state",       HTTP_GET, routeState);

@@ -166,7 +166,9 @@ def main():
     if not parts:
         return
 
-    url = f"http://{HOST}/meter?" + "&".join(parts)
+    # stop=1 tells the device a turn just finished; what it does about that is
+    # the device's business, configured on the device.
+    url = f"http://{HOST}/meter?" + "&".join(parts + ["stop=1"])
     if "--print" in sys.argv:
         print(url)
         return

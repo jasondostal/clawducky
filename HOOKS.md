@@ -103,3 +103,27 @@ Check what it would send without sending it:
 ```sh
 tools/clawd-usage.py --print
 ```
+
+## Reacting to a finished turn
+
+The feeder appends `stop=1` to the push it already sends, so a finished turn
+costs one request rather than two. What the crab *does* about that is
+configured on the crab, not in the hook — the hook reports an event, the device
+owns the reaction:
+
+```sh
+curl 'http://clawd.local/stopface?mode=random'              # a different face each turn
+curl 'http://clawd.local/stopface?mode=fixed&f=disapproval' # always the same one
+curl 'http://clawd.local/stopface?mode=none'                # just update the numbers
+```
+
+Also settable from the `// on stop` picker in the web UI. `random` is the fun
+one: a fixed face stops registering after a day, but a rotating one reads as
+the crab having moods.
+
+Whatever face a turn produces also becomes the auto-cycle's home face, so a
+cycling crab alternates between the usage screen and the most recent reaction
+rather than a stale default.
+
+`GET /meter/cycle?on=1&sec=10&random=1` cycles between face and usage, picking
+a fresh random face each time round.

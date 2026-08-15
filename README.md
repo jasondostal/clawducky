@@ -109,12 +109,29 @@ Go to **Tools → Library Manager** and install both:
 
 Go to **Tools** and set:
 
-| Setting         | Value                   |
-| --------------- | ----------------------- |
-| Board           | ESP32C3 Dev Module      |
-| USB CDC On Boot | **Enabled** ← important |
-| CPU Frequency   | 160 MHz                 |
-| Upload Speed    | 921600                  |
+| Setting          | Value                                |
+| ---------------- | ------------------------------------ |
+| Board            | ESP32C3 Dev Module                   |
+| USB CDC On Boot  | **Enabled** ← important              |
+| CPU Frequency    | 160 MHz                              |
+| Upload Speed     | 921600                               |
+| Partition Scheme | **Huge APP (3MB No OTA/1MB SPIFFS)** |
+
+The partition scheme matters. The default reserves half the 4MB flash for OTA
+updates this sketch never uses, leaving a 1.31MB app partition the sketch is
+close to outgrowing. `Huge APP` gives it 3MB instead — same code, same board,
+roughly a third of the usage.
+
+Building from the command line:
+
+```sh
+arduino-cli compile \
+  --fqbn "esp32:esp32:esp32c3:CDCOnBoot=cdc,CPUFreq=160,PartitionScheme=huge_app" \
+  clawd_mochi
+```
+
+The sketch directory must be named `clawd_mochi` to match the `.ino`, so from a
+clone named `clawd-mochi` you'll want a copy or symlink.
 
 ### Step 5 — Upload the sketch
 

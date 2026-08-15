@@ -591,6 +591,14 @@ uint8_t  mtrCtx = 0, mtrSes = 0, mtrWk = 0;   // percentages, 0-100
 uint32_t mtrSeen = 0;      // millis() of the last /meter push; 0 = never fed
 bool     mtrOverlay = false;   // pin the two bars to the bottom of other views
 
+// Auto-cycle. Off by default: an instrument you have to wait for isn't
+// glanceable, so this is opt-in rather than the primary way to read usage.
+bool     mtrCycle     = false;
+uint16_t mtrCycleSec  = 10;
+uint32_t nextCycle    = 0;
+uint8_t  cycleView    = VIEW_EYES_NORMAL;   // what to return to
+uint8_t  cycleExpr    = 0;
+
 bool meterStale() {
   return mtrSeen == 0 || (millis() - mtrSeen) > MTR_STALE;
 }
@@ -675,6 +683,29 @@ void drawMeterView() {
     tft.print("no data yet");
   }
   drawMeterBars(190);
+}
+
+// Flip between the current face and the meter. Saves whatever face was showing
+// so the cycle returns to it rather than resetting to default eyes.
+void meterCycleTick() {
+  if (!mtrCycle || busy || termMode || !uiStarted) return;
+  if (currentView != VIEW_METER && currentView != VIEW_EYES_NORMAL
+      && currentView != VIEW_EYES_SQUISH && currentView != VIEW_EXPRESSION) return;
+  if (millis() < nextCycle) return;
+  nextCycle = millis() + (uint32_t)mtrCycleSec * 1000UL;
+
+  if (currentView == VIEW_METER) {
+    currentView = cycleView;
+    currentExpr = cycleExpr;
+    if      (currentView == VIEW_EXPRESSION)  drawExpression(cycleExpr);
+    else if (currentView == VIEW_EYES_SQUISH) drawSquishEyes();
+    else                                      drawNormalEyes();
+  } else {
+    cycleView = currentView;
+    cycleExpr = currentExpr;
+    currentView = VIEW_METER;
+    drawMeterView();
+  }
 }
 
 void drawCodeView() {
@@ -1000,6 +1031,10 @@ body{background:#1c1c20;font-family:'Courier New',monospace;color:#e8e4dc;
 
 /* View grid */
 .vgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;max-width:390px}
+.cysec{font-size:10px;color:#8a8278;letter-spacing:.5px;display:inline-flex;
+       align-items:center;gap:4px}
+.cysec input{width:46px;background:#252428;border:1.5px solid #38343a;border-radius:8px;
+       color:#e8e4dc;font:inherit;font-size:11px;padding:4px 6px;text-align:center}
 .vbtn{background:#252428;border:1.5px solid #38343a;border-radius:12px;
   color:#d8d4cc;font-family:'Courier New',monospace;
   padding:14px 6px 10px;cursor:pointer;text-align:center;
@@ -1077,6 +1112,10 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
 <div class="ctrl">
   <button class="cbtn on" id="blBtn" onclick="toggleBL()">&#9728; display on</button>
   <button class="cbtn dim" id="ovBtn" onclick="toggleOverlay()">&#9707; usage bars off</button>
+  <button class="cbtn dim" id="cyBtn" onclick="toggleCycle()">&#8635; cycle off</button>
+  <span class="cysec">every
+    <input type="number" id="cySec" min="2" max="600" value="10" oninput="setCycleSec(this.value)">s
+  </span>
 </div>
 
 <div class="sec">// views</div>
@@ -1231,6 +1270,21 @@ async function setMeter() {
   activeView = 4;
   document.querySelectorAll('.vbtn').forEach(b =>
     b.classList.toggle('active', parseInt(b.dataset.v) === 4));
+}
+
+let cyOn = false;
+async function toggleCycle() {
+  cyOn = !cyOn;
+  const sec = document.getElementById('cySec').value || 10;
+  if (!await req('/meter/cycle?on=' + (cyOn ? 1 : 0) + '&sec=' + sec)) { cyOn = !cyOn; return; }
+  const b = document.getElementById('cyBtn');
+  b.innerHTML = cyOn ? '\u21BB cycle on' : '\u21BB cycle off';
+  b.classList.toggle('on', cyOn);
+  b.classList.toggle('dim', !cyOn);
+}
+
+async function setCycleSec(v) {
+  await req('/meter/cycle?sec=' + v);
 }
 
 let ovOn = false;
@@ -1543,6 +1597,23 @@ void routeMeterView() {
   drawMeterView();
 }
 
+// /meter/cycle?on=0|1&sec=N — alternate between the face and the meter.
+void routeMeterCycle() {
+  if (server.hasArg("sec"))
+    mtrCycleSec = constrain(server.arg("sec").toInt(), 2, 600);
+  if (server.hasArg("on")) {
+    mtrCycle = server.arg("on").toInt() != 0;
+    if (mtrCycle) {
+      cycleView = (currentView == VIEW_METER) ? VIEW_EYES_NORMAL : currentView;
+      cycleExpr = currentExpr;
+      nextCycle = millis() + (uint32_t)mtrCycleSec * 1000UL;
+    }
+  }
+  server.send(200, "application/json",
+              String("{\"cycle\":") + (mtrCycle ? "1" : "0") +
+              ",\"sec\":" + String(mtrCycleSec) + "}");
+}
+
 // /meter/overlay?on=0|1 — with no arg, reports the current setting.
 void routeMeterOverlay() {
   if (server.hasArg("on")) {
@@ -1767,6 +1838,7 @@ void setup() {
   server.on("/face",        HTTP_GET, routeFace);
   server.on("/meter",       HTTP_GET, routeMeter);
   server.on("/meter/view",  HTTP_GET, routeMeterView);
+  server.on("/meter/cycle", HTTP_GET, routeMeterCycle);
   server.on("/meter/overlay", HTTP_GET, routeMeterOverlay);
   server.on("/claude",      HTTP_GET, routeClaude);
   server.on("/state",       HTTP_GET, routeState);
@@ -1784,4 +1856,5 @@ void setup() {
 void loop() {
   server.handleClient();
   claudeTick();
+  meterCycleTick();
 }

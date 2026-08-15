@@ -326,6 +326,7 @@ void drawNormalEyes(int16_t ox = 0, bool blink = false) {
     tft.fillRect(rx, ey + EYE_H / 2 - 3, EYE_W, 6, C_BLACK);
   }
   drawMeterOverlay();
+  drawStatusBadges();
 }
 
 void drawChevron(int16_t cx, int16_t cy, int16_t arm, int16_t reach,
@@ -356,6 +357,7 @@ void drawSquishEyes(bool closed = false) {
     tft.fillRect(rx, cy - 5, EYE_W, 10, C_BLACK);
   }
   drawMeterOverlay();
+  drawStatusBadges();
 }
 
 // ── Expressions ───────────────────────────────────────────────
@@ -494,6 +496,7 @@ void drawExpressionFrame(uint8_t idx, const FrameDelta& d) {
     drawBrow(rcx, browY, e.tiltR, e.browHalf, false, C_BLACK);
   }
   drawMeterOverlay();
+  drawStatusBadges();
 }
 
 void drawExpression(uint8_t idx) {
@@ -764,6 +767,112 @@ void drawMeterView() {
     tft.print("no data yet");
   }
   drawMeterBars(190);
+  drawStatusBadges();
+}
+
+// ── Status badges ─────────────────────────────────────────────
+// Two chips in the top-right corner, stamped over whatever view is up.
+// Deliberately NOT views: the cycle owns which view is showing and badges only
+// ever add a corner, so the two can't argue about who has the screen — the
+// thing that went wrong every time a hook tried to say something by picking a
+// face. Same call sites as the meter overlay, which owns the bottom strip.
+//
+// Left slot is what Claude is doing, right slot is anything wrong. Position
+// carries the category, so the glyph only has to carry the detail.
+#define BG_ACT_NONE       0
+#define BG_ACT_WORKING    1
+#define BG_WARN_NONE      0
+#define BG_WARN_ATTENTION 1
+#define BG_WARN_LIMIT     2
+
+uint8_t  badgeAct   = BG_ACT_NONE;
+uint8_t  badgeWarn  = BG_WARN_NONE;
+uint32_t badgeActAt = 0, badgeWarnAt = 0;   // millis() of the last push
+uint8_t  badgeFrame = 0;                    // which working dot is lit
+uint32_t badgeFrameAt = 0;
+
+// A hook whose clear-up never fires would leave a chip up forever, and a badge
+// lying about the state is worse than no badge — hooks are fire-and-forget, so
+// assume some of them get dropped. Both slots lapse on their own.
+#define BADGE_STALE 600000UL   // 10 min
+
+// Faces sit at y=50..150 and the meter's arc stays near the middle, so the top
+// corners are the one region nothing else claims.
+#define BADGE_W   26
+#define BADGE_H   22
+#define BADGE_Y    6
+#define BADGE_XA 178   // left slot  — activity
+#define BADGE_XW 208   // right slot — trouble
+
+bool badgesVisible() {
+  if (termMode || !uiStarted) return false;
+  return currentView == VIEW_EYES_NORMAL || currentView == VIEW_EYES_SQUISH
+      || currentView == VIEW_EXPRESSION  || currentView == VIEW_METER;
+}
+
+// Dark rounded backing under every chip. The animation background is
+// user-settable and the meter's is near-black, so a bare glyph has no contrast
+// it can count on; the chip brings its own.
+void drawBadgeChip(int16_t x, uint16_t border) {
+  tft.fillRoundRect(x, BADGE_Y, BADGE_W, BADGE_H, 6, C_DARKBG);
+  tft.drawRoundRect(x, BADGE_Y, BADGE_W, BADGE_H, 6, border);
+}
+
+void drawBadgeAct() {
+  if (badgeAct == BG_ACT_NONE) return;
+  drawBadgeChip(BADGE_XA, C_MUTED);
+  const int16_t cy = BADGE_Y + BADGE_H / 2;
+  for (uint8_t i = 0; i < 3; i++)
+    tft.fillCircle(BADGE_XA + 7 + i * 6, cy, 2,
+                   i == badgeFrame ? C_GREEN : C_MUTED);
+}
+
+void drawBadgeWarn() {
+  if (badgeWarn == BG_WARN_NONE) return;
+  const uint16_t col = (badgeWarn == BG_WARN_LIMIT) ? C_RED : C_AMBER;
+  drawBadgeChip(BADGE_XW, col);
+  const int16_t cx = BADGE_XW + BADGE_W / 2, cy = BADGE_Y + BADGE_H / 2;
+  if (badgeWarn == BG_WARN_LIMIT) {          // ✕ — shape differs, not just hue
+    for (int8_t t = -1; t <= 1; t++) {
+      tft.drawLine(cx - 4, cy - 5 + t, cx + 4, cy + 5 + t, col);
+      tft.drawLine(cx + 4, cy - 5 + t, cx - 4, cy + 5 + t, col);
+    }
+  } else {                                   // !
+    tft.fillRect(cx - 1, cy - 7, 3, 9, col);
+    tft.fillRect(cx - 1, cy + 4, 3, 3, col);
+  }
+}
+
+void drawStatusBadges() {
+  if (!badgesVisible()) return;
+  drawBadgeAct();
+  drawBadgeWarn();
+}
+
+// Repaint whatever is showing. Clearing a badge is the case that needs it:
+// the chip is opaque going on, so only coming off has to restore pixels.
+void redrawCurrentView() {
+  if (currentView == VIEW_EXPRESSION)        drawExpression(currentExpr);
+  else if (currentView == VIEW_EYES_NORMAL)  drawNormalEyes();
+  else if (currentView == VIEW_EYES_SQUISH)  drawSquishEyes();
+  else if (currentView == VIEW_METER)        drawMeterView();
+}
+
+void badgeTick() {
+  bool lapsed = false;
+  if (badgeAct != BG_ACT_NONE && millis() - badgeActAt > BADGE_STALE) {
+    badgeAct = BG_ACT_NONE; lapsed = true;
+  }
+  if (badgeWarn != BG_WARN_NONE && millis() - badgeWarnAt > BADGE_STALE) {
+    badgeWarn = BG_WARN_NONE; lapsed = true;
+  }
+  if (lapsed) { redrawCurrentView(); return; }
+
+  if (badgeAct == BG_ACT_WORKING && badgesVisible() && millis() > badgeFrameAt) {
+    badgeFrame   = (badgeFrame + 1) % 3;
+    badgeFrameAt = millis() + 350;
+    drawBadgeAct();
+  }
 }
 
 // React to a finished turn. Also becomes the cycle's home face, so a cycling
@@ -1982,12 +2091,39 @@ void routeMeterOverlay() {
   if (server.hasArg("on")) {
     mtrOverlay = server.arg("on").toInt() != 0;
     settingsTouch();
-    if (currentView == VIEW_EXPRESSION)        drawExpression(currentExpr);
-    else if (currentView == VIEW_EYES_NORMAL)  drawNormalEyes();
-    else if (currentView == VIEW_EYES_SQUISH)  drawSquishEyes();
+    redrawCurrentView();
   }
   server.send(200, "application/json",
               String("{\"overlay\":") + (mtrOverlay ? "1" : "0") + "}");
+}
+
+// /badge?act=idle|working&warn=none|attention|limit — the corner chips. Either
+// arg alone is fine; a hook usually owns exactly one of them. Nothing here is
+// persisted: a badge describes what's happening right now, and "right now" does
+// not survive a power cycle.
+void routeBadge() {
+  bool cleared = false;
+  if (server.hasArg("act")) {
+    const uint8_t was = badgeAct;
+    badgeAct   = (server.arg("act") == "working") ? BG_ACT_WORKING : BG_ACT_NONE;
+    badgeActAt = millis();
+    badgeFrame = 0;
+    if (was != BG_ACT_NONE && badgeAct == BG_ACT_NONE) cleared = true;
+  }
+  if (server.hasArg("warn")) {
+    const String w = server.arg("warn");
+    const uint8_t was = badgeWarn;
+    badgeWarn   = (w == "attention") ? BG_WARN_ATTENTION
+                : (w == "limit")     ? BG_WARN_LIMIT : BG_WARN_NONE;
+    badgeWarnAt = millis();
+    if (was != BG_WARN_NONE && badgeWarn == BG_WARN_NONE) cleared = true;
+  }
+  server.send(200, "application/json",
+              String("{\"act\":") + badgeAct + ",\"warn\":" + badgeWarn + "}");
+  // Chips are opaque going on, so setting one only has to draw it. Taking one
+  // off is the case that needs the pixels underneath back.
+  if (cleared) redrawCurrentView();
+  else         drawStatusBadges();
 }
 
 void routeChar() {
@@ -2104,6 +2240,11 @@ void routeState() {
   j += ",\"bl\":";     j += backlightOn ? "true" : "false";
   j += ",\"speed\":";  j += animSpeed;
   j += ",\"claude\":"; j += claudeState;
+  j += ",\"badgeact\":\"";  j += badgeAct == BG_ACT_WORKING ? "working" : "idle";
+  j += "\",\"badgewarn\":\"";
+  j += badgeWarn == BG_WARN_LIMIT ? "limit"
+     : badgeWarn == BG_WARN_ATTENTION ? "attention" : "none";
+  j += "\"";
   j += ",\"overlay\":";    j += mtrOverlay   ? "true" : "false";
   j += ",\"cycle\":";    j += mtrCycle     ? "true" : "false";
   j += ",\"cyclesec\":"; j += mtrCycleSec;
@@ -2227,6 +2368,7 @@ void setup() {
   server.on("/meter/cycle", HTTP_GET, routeMeterCycle);
   server.on("/stopface",    HTTP_GET, routeStopFace);
   server.on("/meter/overlay", HTTP_GET, routeMeterOverlay);
+  server.on("/badge",       HTTP_GET, routeBadge);
   server.on("/claude",      HTTP_GET, routeClaude);
   server.on("/state",       HTTP_GET, routeState);
   server.onNotFound(routeNotFound);
@@ -2243,6 +2385,7 @@ void setup() {
 void loop() {
   server.handleClient();
   claudeTick();
+  badgeTick();
   meterCycleTick();
   settingsTick();
 }

@@ -191,6 +191,7 @@ Everything is a `GET`, so you can drive the whole thing with `curl`.
 | `/meter/cycle?item=<key>&on=0\|1` | Tick/untick a view: `eyes`, `squish`, `meter`, or a face id |
 | `/meter/cycle?random=0\|1&mix=0\|1` | Random order; interleave the meter between faces |
 | `/stopface?mode=none\|fixed\|random&f=<id>` | What a finished turn looks like; `random` draws from the ticks |
+| `/badge?act=idle\|working&warn=none\|attention\|limit` | Corner status chips; never takes the screen |
 | `/cmd?k=w\|s\|d\|a` | Original views: normal, squish, Claude Code, logo |
 | `/claude?e=working\|waiting\|done\|error\|idle` | Status-lamp states |
 | `/speed?v=1\|2\|3` | Animation speed |
@@ -208,11 +209,15 @@ UI restores its own selection after a reload rather than guessing:
 | `cycle` / `cyclesec` / `cyclerandom` | Auto-cycle state, interval, randomize |
 | `stopmode` | On-stop policy: `none`, `fixed` or `random` |
 | `stopface` | Which face `fixed` uses — remembered while you toggle modes |
+| `badgeact` / `badgewarn` | Corner chips: what Claude's doing, and anything wrong |
 | `busy` | Device is mid-animation and won't answer promptly |
 | `speed`, `bl`, `sta`, `ip` | Animation speed, backlight, WiFi mode, address |
 
 Settings persist to NVS and survive a power cycle — except the backlight, which
 deliberately doesn't, because booting to a black screen reads as dead hardware.
+
+Badges are the other exception, and for the same reason inverted: they describe
+what is happening right now, and nothing is happening right after a reboot.
 
 ---
 

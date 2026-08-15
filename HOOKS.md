@@ -134,3 +134,58 @@ rather than a stale default.
 
 `GET /meter/cycle?on=1&sec=10&random=1` cycles between face and usage, picking
 a fresh random face each time round.
+
+## Corner badges
+
+Two chips in the top-right, and the only thing on the device that never takes
+the screen: the cycle keeps showing whatever it was showing, badges just add a
+corner. That separation is the whole point. Anything that says what Claude is
+doing by *picking a face* ends up fighting the rotation for the display, and
+faces stop meaning anything once `dead` sometimes means "rate limited".
+
+Left slot is activity, right slot is trouble — position carries the category,
+so the glyph only has to carry the detail:
+
+```sh
+curl 'http://clawducky.local/badge?act=working'     # ∙∙● green dots, animated
+curl 'http://clawducky.local/badge?act=idle'        # left slot off
+curl 'http://clawducky.local/badge?warn=attention'  # ! amber — your turn
+curl 'http://clawducky.local/badge?warn=limit'      # ✕ red — rate limited
+curl 'http://clawducky.local/badge?warn=none'       # right slot off
+```
+
+Both slots lapse on their own after 10 minutes. Hooks are fire-and-forget and
+some of them get dropped, and a chip still claiming "working" an hour later is
+worse than no chip at all.
+
+Wiring, in `~/.claude/settings.json` — `UserPromptSubmit` lights the activity
+slot, `Stop` clears it, and `Notification` is the one that says look up:
+
+```json
+"UserPromptSubmit": [
+  { "hooks": [{ "type": "command", "async": true,
+                "command": "(curl -sm2 'http://clawducky.local/badge?act=working&warn=none' >/dev/null 2>&1 &)" }] }
+],
+"Stop": [
+  { "hooks": [{ "type": "command", "async": true,
+                "command": "(curl -sm2 'http://clawducky.local/badge?act=idle' >/dev/null 2>&1 &)" }] }
+],
+"Notification": [
+  { "matcher": "permission_prompt|idle_prompt",
+    "hooks": [{ "type": "command", "async": true,
+                "command": "(curl -sm2 'http://clawducky.local/badge?warn=attention' >/dev/null 2>&1 &)" }] }
+],
+"StopFailure": [
+  { "matcher": "rate_limit",
+    "hooks": [{ "type": "command", "async": true,
+                "command": "(curl -sm2 'http://clawducky.local/badge?warn=limit' >/dev/null 2>&1 &)" }] }
+]
+```
+
+`UserPromptSubmit` clears the warning as a side effect, which is the right
+place for it: the condition a `permission_prompt` describes is "Claude is
+waiting on you", and you answering it *is* the clear.
+
+The full-screen `/claude?e=` states are still there and still take over the
+display — they're just not what the hooks drive any more. Hit one by hand when
+you want the whole crab to react.

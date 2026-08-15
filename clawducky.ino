@@ -602,9 +602,17 @@ bool     mtrOverlay = false;   // pin the two bars to the bottom of other views
 bool     mtrCycle     = false;
 uint16_t mtrCycleSec  = 10;
 uint32_t nextCycle    = 0;
-uint8_t  cycleView    = VIEW_EYES_NORMAL;   // what to return to
-uint8_t  cycleExpr    = 0;
-bool     mtrCycleRand = false;   // pick a fresh face each time round
+bool     mtrCycleRand = false;   // pick at random rather than in order
+
+// Which views take part in the cycle, one bit each. Slots 0-2 are the fixed
+// views; from CY_FACE0 up it's one bit per EXPRESSIONS[] entry.
+#define CY_EYES    0
+#define CY_SQUISH  1
+#define CY_METER   2
+#define CY_FACE0   3
+#define CY_SLOTS   (CY_FACE0 + 8)
+uint16_t cycleMask = 0xFFFF;     // everything, until told otherwise
+int8_t   cycleSlot = -1;         // where the rotation currently sits
 
 // What the crab does when the feeder reports a finished turn. The hook stays
 // dumb — it reports the event, the device owns the reaction.
@@ -640,6 +648,7 @@ void settingsSave() {
   prefs.putUChar("sfmode", stopFaceMode);
   prefs.putUChar("sfidx",  stopFaceIdx);
   prefs.putUChar("speed",  animSpeed);
+  prefs.putUShort("cycmask", cycleMask);
   prefs.end();
   settingsDirty = false;
 }
@@ -653,6 +662,7 @@ void settingsLoad() {
   stopFaceMode = prefs.getUChar ("sfmode", SF_NONE);
   stopFaceIdx  = prefs.getUChar ("sfidx",  0);
   animSpeed    = prefs.getUChar ("speed",  1);
+  cycleMask    = prefs.getUShort("cycmask", 0xFFFF);
   prefs.end();
   // Clamp everything: a firmware change can shrink EXPRESSIONS[] under a
   // stored index, and a corrupt read shouldn't brick the boot.
@@ -764,14 +774,78 @@ void triggerStopFace() {
   claudeState = CL_NONE;
   currentView = VIEW_EXPRESSION;
   currentExpr = idx;
-  cycleView   = VIEW_EXPRESSION;
-  cycleExpr   = idx;
+  // Move the rotation to this face so a cycling duck carries on from the
+  // reaction the turn just produced rather than snapping back mid-sequence.
+  cycleSlot   = CY_FACE0 + idx;
   animExpression(idx);
   nextIdleBlink = millis() + 3000 + random(5000);
 }
 
-// Flip between the current face and the meter. Saves whatever face was showing
-// so the cycle returns to it rather than resetting to default eyes.
+// Choosing a view by hand means you want to look at that view, so the
+// rotation stands down rather than yanking the display away seconds later.
+void stopCycling() {
+  if (!mtrCycle) return;
+  mtrCycle = false;
+  settingsTouch();
+}
+
+bool cycleSlotEnabled(uint8_t slot) {
+  if (slot >= CY_FACE0 && (slot - CY_FACE0) >= EXPRESSION_COUNT) return false;
+  return cycleMask & (1 << slot);
+}
+
+// "eyes" | "squish" | "meter" | any expression id  ->  slot index, or -1.
+int8_t cycleSlotFor(const String& key) {
+  if (key == "eyes")   return CY_EYES;
+  if (key == "squish") return CY_SQUISH;
+  if (key == "meter")  return CY_METER;
+  const int8_t e = expressionIndex(key);
+  return e < 0 ? -1 : (int8_t)(CY_FACE0 + e);
+}
+
+const char* cycleSlotKey(uint8_t slot) {
+  if (slot == CY_EYES)   return "eyes";
+  if (slot == CY_SQUISH) return "squish";
+  if (slot == CY_METER)  return "meter";
+  return EXPRESSIONS[slot - CY_FACE0].id;
+}
+
+uint8_t cycleSlotCount() {
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < CY_SLOTS; i++) if (cycleSlotEnabled(i)) n++;
+  return n;
+}
+
+// Next enabled slot after `from`, wrapping. Returns -1 if nothing is enabled.
+int8_t cycleNextSlot(int8_t from) {
+  const uint8_t n = cycleSlotCount();
+  if (n == 0) return -1;
+  if (mtrCycleRand && n > 1) {
+    int8_t pick;
+    do {                                   // never repeat the current slot
+      pick = (int8_t)random(CY_SLOTS);
+    } while (!cycleSlotEnabled(pick) || pick == from);
+    return pick;
+  }
+  for (uint8_t step = 1; step <= CY_SLOTS; step++) {
+    const int8_t c = (from + step) % CY_SLOTS;
+    if (cycleSlotEnabled(c)) return c;
+  }
+  return -1;
+}
+
+void showCycleSlot(uint8_t slot) {
+  if (slot == CY_EYES)        { currentView = VIEW_EYES_NORMAL; drawNormalEyes(); }
+  else if (slot == CY_SQUISH) { currentView = VIEW_EYES_SQUISH; drawSquishEyes(); }
+  else if (slot == CY_METER)  { currentView = VIEW_METER;       drawMeterView();  }
+  else {
+    currentExpr = slot - CY_FACE0;
+    currentView = VIEW_EXPRESSION;
+    drawExpression(currentExpr);
+  }
+}
+
+// Advance the cycle to its next enabled view.
 void meterCycleTick() {
   if (!mtrCycle || busy || termMode || !uiStarted) return;
   if (currentView != VIEW_METER && currentView != VIEW_EYES_NORMAL
@@ -779,22 +853,10 @@ void meterCycleTick() {
   if (millis() < nextCycle) return;
   nextCycle = millis() + (uint32_t)mtrCycleSec * 1000UL;
 
-  if (currentView == VIEW_METER) {
-    if (mtrCycleRand) {
-      cycleView = VIEW_EXPRESSION;
-      cycleExpr = (uint8_t)random(EXPRESSION_COUNT);
-    }
-    currentView = cycleView;
-    currentExpr = cycleExpr;
-    if      (currentView == VIEW_EXPRESSION)  drawExpression(cycleExpr);
-    else if (currentView == VIEW_EYES_SQUISH) drawSquishEyes();
-    else                                      drawNormalEyes();
-  } else {
-    cycleView = currentView;
-    cycleExpr = currentExpr;
-    currentView = VIEW_METER;
-    drawMeterView();
-  }
+  const int8_t next = cycleNextSlot(cycleSlot);
+  if (next < 0) return;          // nothing ticked; leave the display alone
+  cycleSlot = next;
+  showCycleSlot((uint8_t)next);
 }
 
 void drawCodeView() {
@@ -1128,6 +1190,11 @@ body{background:#1c1c20;font-family:'Courier New',monospace;color:#e8e4dc;
 .cysec input[type=checkbox]{accent-color:#c96a3e;width:14px;height:14px}
 .cysec select{background:#252428;border:1.5px solid #38343a;border-radius:8px;
        color:#e8e4dc;font:inherit;font-size:11px;padding:4px 6px}
+.vbtn{position:relative}
+.cyk{position:absolute;top:5px;right:5px;margin:0;accent-color:#c96a3e;
+     width:13px;height:13px;cursor:pointer;opacity:.5}
+.cyk:checked{opacity:1}
+.cyk:disabled{display:none}
 .vbtn{background:#252428;border:1.5px solid #38343a;border-radius:12px;
   color:#d8d4cc;font-family:'Courier New',monospace;
   padding:14px 6px 10px;cursor:pointer;text-align:center;
@@ -1227,11 +1294,15 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
 <div class="sec">// views</div>
 <div class="vgrid" id="views">
   <button class="vbtn active" data-v="0" onclick="setView(0)">
+    <input type="checkbox" class="cyk" data-cy="eyes" title="include in cycle"
+           onclick="event.stopPropagation()" onchange="setCycleItem('eyes',this.checked)">
     <span class="ic">&#9632; &#9632;</span>
     <span class="nm">Normal eyes</span>
     <span class="ht">wiggle + blink</span>
   </button>
   <button class="vbtn" data-v="1" onclick="setView(1)">
+    <input type="checkbox" class="cyk" data-cy="squish" title="include in cycle"
+           onclick="event.stopPropagation()" onchange="setCycleItem('squish',this.checked)">
     <span class="ic">&gt; &lt;</span>
     <span class="nm">Squish eyes</span>
     <span class="ht">open / close</span>
@@ -1247,6 +1318,8 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
     <span class="ht">draw on display</span>
   </button>
   <button class="vbtn" data-v="5" onclick="setMeter()">
+    <input type="checkbox" class="cyk" data-cy="meter" title="include in cycle"
+           onclick="event.stopPropagation()" onchange="setCycleItem('meter',this.checked)">
     <span class="ic">&#9680;</span>
     <span class="nm">Usage</span>
     <span class="ht">context + quota</span>
@@ -1367,9 +1440,13 @@ async function loadFaces() {
     const b = document.createElement('button');
     b.className = 'vbtn';
     b.dataset.f = id;
-    b.innerHTML = '<span class="ic">' + m[0] + '</span>' +
-                  '<span class="nm">' + m[1] + '</span>' +
-                  '<span class="ht">' + m[2] + '</span>';
+    b.innerHTML =
+      '<input type="checkbox" class="cyk" data-cy="' + id + '" title="include in cycle" ' +
+        'onclick="event.stopPropagation()" ' +
+        'onchange="setCycleItem(\'' + id + '\',this.checked)">' +
+      '<span class="ic">' + m[0] + '</span>' +
+      '<span class="nm">' + m[1] + '</span>' +
+      '<span class="ht">' + m[2] + '</span>';
     b.onclick = () => setFace(id);
     box.appendChild(b);
   }
@@ -1386,6 +1463,7 @@ async function setMeter() {
   if (isBusy || termOpen || canvasOpen) return;
   if (!await req('/meter/view')) return;
   activeView = VIEW_METER;
+  reflectCycleOff();
   document.querySelectorAll('.vbtn').forEach(b =>
     b.classList.toggle('active', parseInt(b.dataset.v) === VIEW_METER));
 }
@@ -1403,6 +1481,20 @@ async function toggleCycle() {
 
 async function setCycleSec(v) {
   await req('/meter/cycle?sec=' + v);
+}
+
+async function setCycleItem(item, on) {
+  await req('/meter/cycle?item=' + encodeURIComponent(item) + '&on=' + (on ? 1 : 0));
+}
+
+// Picking a view by hand stands the rotation down device-side; mirror that here
+// so the toggle doesn't keep claiming the cycle is running.
+function reflectCycleOff() {
+  if (!cyOn) return;
+  cyOn = false;
+  const b = document.getElementById('cyBtn');
+  b.innerHTML = '\u21BB cycle off';
+  b.classList.remove('on'); b.classList.add('dim');
 }
 
 async function setCycleRand(on) {
@@ -1429,7 +1521,8 @@ async function toggleOverlay() {
 async function setFace(id) {
   if (isBusy || termOpen || canvasOpen) return;
   if (!await req('/face?f=' + encodeURIComponent(id))) return;
-  activeView = -1;
+  activeView = VIEW_EXPRESSION;
+  reflectCycleOff();
   document.querySelectorAll('.vbtn').forEach(
     b => b.classList.toggle('active', b.dataset.f === id));
   setBusy(true);
@@ -1471,6 +1564,7 @@ async function setView(v) {
   const keys = ['w','s','d'];
   if (!await req('/cmd?k=' + keys[v])) return;
   activeView = v;
+  reflectCycleOff();
   // Face buttons share the .vbtn class and carry no data-v, so this clears
   // them for free — NaN never matches.
   document.querySelectorAll('.vbtn').forEach(b =>
@@ -1648,6 +1742,10 @@ async function clearAll() {
     const sf = document.getElementById('sfSel');
     sf.value = j.stopmode === 'fixed' ? (j.stopface || 'none') : (j.stopmode || 'none');
 
+    const items = new Set(j.cycleitems || []);
+    document.querySelectorAll('.cyk').forEach(
+      c => c.checked = items.has(c.dataset.cy));
+
     // The device is the source of truth for what's on screen. Without this the
     // UI always came back claiming "Normal eyes" no matter what was showing.
     activeView = j.view;
@@ -1686,6 +1784,7 @@ void routeCmd() {
   const char c = server.arg("k")[0];
   uiStarted = true;
   claudeState = CL_NONE;   // manual control overrides hook-driven state
+  stopCycling();
 
   if (termMode) {
     if (c == 'q') { termMode = false; drawCodeView(); }
@@ -1727,6 +1826,7 @@ void routeFace() {
   termMode    = false;
   currentView = VIEW_EXPRESSION;
   currentExpr = (uint8_t)idx;
+  stopCycling();
   busy        = true;
   server.send(200, "application/json", "{\"ok\":1}");
   animExpression((uint8_t)idx);
@@ -1777,6 +1877,7 @@ void routeMeterView() {
   claudeState = CL_NONE;
   termMode    = false;
   currentView = VIEW_METER;
+  stopCycling();
   server.send(200, "application/json", "{\"ok\":1}");
   drawMeterView();
 }
@@ -1787,11 +1888,19 @@ void routeMeterCycle() {
     mtrCycleSec = constrain(server.arg("sec").toInt(), 2, 600);
   if (server.hasArg("random"))
     mtrCycleRand = server.arg("random").toInt() != 0;
+  if (server.hasArg("item")) {
+    const int8_t slot = cycleSlotFor(server.arg("item"));
+    if (slot >= 0) {
+      if (server.arg("on").toInt() != 0) cycleMask |=  (1 << slot);
+      else                               cycleMask &= ~(1 << slot);
+    }
+  }
   if (server.hasArg("on")) {
     mtrCycle = server.arg("on").toInt() != 0;
     if (mtrCycle) {
-      cycleView = (currentView == VIEW_METER) ? VIEW_EYES_NORMAL : currentView;
-      cycleExpr = currentExpr;
+      // Turning the rotation on is an explicit instruction, so it may take over
+      // the boot info screen — same reasoning as triggerStopFace().
+      uiStarted = true;
       nextCycle = millis() + (uint32_t)mtrCycleSec * 1000UL;
     }
   }
@@ -1937,6 +2046,15 @@ void routeState() {
   j += stopFaceMode == SF_RANDOM ? "random" : stopFaceMode == SF_FIXED ? "fixed" : "none";
   j += "\",\"stopface\":\"";  j += EXPRESSIONS[stopFaceIdx].id;  j += "\"";
   j += ",\"expression\":\"";      j += EXPRESSIONS[currentExpr].id;  j += "\"";
+  j += ",\"cycleitems\":[";
+  bool first = true;
+  for (uint8_t i = 0; i < CY_SLOTS; i++) {
+    if (!cycleSlotEnabled(i)) continue;
+    if (!first) j += ",";
+    j += "\""; j += cycleSlotKey(i); j += "\"";
+    first = false;
+  }
+  j += "]";
   j += ",\"sta\":";    j += staConnected ? "true" : "false";
   j += ",\"ip\":\"";
   j += staConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();

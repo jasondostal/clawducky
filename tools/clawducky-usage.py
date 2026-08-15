@@ -12,7 +12,7 @@ renders whatever percentages it is handed.
 Usage:
     clawd-usage.py                 # hook mode: reads hook JSON on stdin
     clawd-usage.py --print         # print what would be sent, don't send
-    CLAWD_HOST=1.2.3.4 clawd-usage.py
+    CLAWD_HOST=192.168.1.50 clawd-usage.py   # if mDNS does not resolve
 
 Exits 0 unconditionally. A desk toy must never break the editor: every failure
 path is swallowed, because a non-zero exit from a hook surfaces as an error in
@@ -26,7 +26,7 @@ import time
 import urllib.error
 import urllib.request
 
-HOST = os.environ.get("CLAWD_HOST", "192.168.20.147")
+HOST = os.environ.get("CLAWD_HOST", "clawd.local")
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 CACHE = "/tmp/.clawd-usage-cache.json"
 CACHE_TTL = 60          # seconds; quota crawls, no need to poll every turn

@@ -1,275 +1,225 @@
-<!-- LOGO -->
-<p align="center">
-  <img src="pics/clawd_mochi_banner.png" alt="Clawd Mochi Logo" width="700"/>
-</p>
+# clawducky
 
-# Clawd Mochi 🦀🤖
+A rubber duck with claws. It sits on your desk, pulls faces at you, and tells
+you how much Claude you have left.
 
-A physical desk companion inspired by **Clawd** — the pixel-crab mascot of Claude Code by Anthropic. An ESP32-C3 drives a 1.54" color TFT display and hosts a mobile web controller — no app, no internet, no cloud required.
+An ESP32-C3 driving a 240×240 IPS panel. It shows animated expressions, and it
+shows a live readout of your Claude Code usage — how full the context window
+is, and how much of your 5-hour and weekly quota you've burned. The context
+number is the one that earns its desk space: it answers *"am I about to lose my
+working state"* without you having to stop and check.
 
-**Cost: ~$6–8 · Build time: ~1 hour · Skill level: Beginner**
-
-Support the project on Instagram: [![Instagram](https://img.shields.io/badge/Instagram-E4405F?logo=instagram&logoColor=fff&style=for-the-badge)](https://instagram.com/clawd.mochi)
-
-📦 3D printable case on MakerWorld: [https://makerworld.com/en/models/2559505-clawd-mochi-physical-claude-code-mascot#profileId-2820000](https://makerworld.com/en/models/2559505-clawd-mochi-physical-claude-code-mascot#profileId-2820000)
-
----
-
-> ⚠️ This is an independent fan project. It is not affiliated with, sponsored by, or endorsed by Anthropic. "Claude" and "Clawd" are trademarks of Anthropic.
+Derived from [yousifamanuel/clawd-mochi](https://github.com/yousifamanuel/clawd-mochi)
+— see [Credits](#credits). **The 3D-printable case lives in that repo**; this
+one is firmware only.
 
 ---
-
-<p align="center">
-  <img src="pics/clawd_mochi_3_4.jpeg" alt="Assembled Clawd Mochi on a desk" width="500"/>
-  &nbsp;
-  <img src="pics/clawd_mochi_claude_code.jpeg" alt="Claude Code view" width="500"/>
-</p>
 
 ## What it does
 
-Clawd Mochi sits on your desk and shows animated expressions on a small color display. You control it from any phone or browser by connecting to its built-in WiFi hotspot:
+**Expressions.** Eight faces — `disapproval` (ಠ_ಠ), `skeptical`, `angry`,
+`sideeye`, `alert`, `happy`, `sleepy`, `dead` — plus the original normal and
+squished eyes. Each animates on arrival: brows drop into place, pupils slide
+over, then a settle-blink. `alert` pops wide, `dead` shakes it off, `sleepy`
+sags and catches itself. Held faces keep blinking on an idle timer so the thing
+looks alive rather than paused.
 
-- **Normal eyes** — pixel-art square eyes with wiggle and blink animations
-- **Squish eyes** — `> <` happy squint with open/close animation
-- **Claude Code** — displays "Claude Code" with an interactive terminal
-- **Canvas** — draw anything on the display from your phone in real time
+**Usage meter.** A context-occupancy arc over two quota bars. Green below 60%,
+amber to 85%, red above — you stop reading it and start just knowing. A feed
+older than 15 minutes greys out and says so, so a stale number never passes as
+current. Optionally the two bars pin to the bottom of any face view, so you get
+usage *and* the duck.
 
----
+**Reacts to your session.** A Claude Code `Stop` hook pushes fresh numbers each
+time Claude finishes a turn, and can pull a face while it's at it — a fixed one,
+or a different random one every turn.
 
-## Parts list
-
-| Part                | Spec                             | ~Price |
-| ------------------- | -------------------------------- | ------ |
-| ESP32-C3 Super Mini | microcontroller with WiFi        | ~$2.50 |
-| ST7789 1.54" TFT    | 240×240 SPI color display        | ~$3.00 |
-| 8 short wires       | 8–10 cm Dupont / jumper wires    | ~$0.50 |
-| 2× M2×6mm screws    | to mount display bezel           | ~$0.10 |
-| Double-sided tape   | to secure components inside case | ~$0.10 |
-| USB-C cable         | for power                        | —      |
-| 3D printed case     | PLA or PETG, ~30g                | ~$0.50 |
-
-**Total: ~$7–8**
+Everything from the original is still here: the self-hosted web UI, the "Claude
+Code" terminal view, and the drawing canvas.
 
 ---
 
-## Wiring
+## Hardware
 
-> ⚠️ Connect VCC to **3.3V only** — never 5V. Use GPIO 8 and 10 for SPI (hardware SPI, fast). Do not use GPIO 6/7 for SPI.
+| Part | Notes |
+|------|-------|
+| **Seeed XIAO ESP32-C3** | Or an ESP32-C3 SuperMini — see the wiring note below |
+| **1.54" ST7789 IPS, 240×240** | 8-pin with `CS`. The 7-pin no-CS variant works too, see below |
+| **U.FL / IPEX antenna** | **Mandatory on the XIAO** — it has no onboard antenna |
+| Dupont wires, header pins | 8 connections |
+| **3D-printed case** | [From the original project](https://github.com/yousifamanuel/clawd-mochi/tree/main/models) |
 
-Pin numbers below are for the **Seeed XIAO ESP32-C3**. GPIO 1 is not broken out on the
-XIAO, so DC moves to GPIO 5 (`D3`) — on a Super Mini, DC goes to GPIO 1 instead and the
-rest of the table is unchanged. Set `TFT_DC` in the sketch to match your board.
+### Wiring
 
-| Display pin | ESP32-C3 GPIO  | XIAO label | Wire color (suggested) |
-| ----------- | -------------- | ---------- | ---------------------- |
-| VCC         | 3V3            | 3V3        | Red                    |
-| GND         | GND            | GND        | Black                  |
-| SDA         | GPIO 10 (MOSI) | D10        | Orange                 |
-| SCL         | GPIO 8 (SCK)   | D8         | Green                  |
-| RES         | GPIO 2         | D0         | Purple                 |
-| DC          | GPIO 5         | D3         | Blue                   |
-| CS          | GPIO 4         | D2         | White                  |
-| BL          | GPIO 3         | D1         | Yellow                 |
+> ⚠️ **VCC goes to 3V3, never 5V.** The panel is 3.3V logic.
 
-On the XIAO the right-hand header runs `D7 D8 D9 D10 3V3 GND VUSB` top to bottom, and the
-left-hand header runs `D0`–`D6` top to bottom.
+| Display | GPIO | XIAO pin |
+|---------|------|----------|
+| VCC | 3V3 | `3V3` |
+| GND | GND | `GND` |
+| SDA (MOSI) | 10 | `D10` |
+| SCL (SCK) | 8 | `D8` |
+| RES | 2 | `D0` |
+| DC | 5 | `D3` |
+| CS | 4 | `D2` |
+| BLK | 3 | `D1` |
 
-Verified against a `MRD0-1.54IPS 240*240(RGB)` panel — the 8-pin variant with a real CS
-line. Some 1.3" ST7789 boards ship 7 pins with no CS; on those, set `#define TFT_CS -1`.
+XIAO header order is `D0`–`D6` down the left, `D7 D8 D9 D10 3V3 GND VUSB` down
+the right. Never use GPIO 6 or 7 for SPI.
 
-The XIAO has **no onboard antenna** (U.FL connector only). Attach an external antenna
-before powering up — it will appear to join WiFi without one on connector leakage alone,
-but range is unusable and transmitting into an unterminated connector is bad for the radio.
+**Two gotchas that cost real time:**
+
+- **GPIO 1 isn't broken out on the XIAO**, so `DC` moves to GPIO 5 (`D3`). On a
+  SuperMini, set `TFT_DC` back to `1` and the rest of the table is unchanged.
+- **The XIAO has no onboard antenna** — U.FL connector only. It will appear to
+  join WiFi without one, on connector leakage alone, which is exactly why this
+  is easy to miss. Range is unusable and transmitting into an unterminated
+  connector is bad for the radio. Attach it before powering up.
+
+If your panel is the 7-pin variant with no `CS` line, set `#define TFT_CS -1`.
 
 ---
 
-## Software setup
+## Build
 
-### Step 1 — Install Arduino IDE
+Arduino IDE 2.x or `arduino-cli`. Install **esp32 by Espressif Systems**, plus
+the **Adafruit GFX** and **Adafruit ST7735/ST7789** libraries.
 
-Download [Arduino IDE 2.x](https://www.arduino.cc/en/software) and install it.
-
-### Step 2 — Add ESP32 board support
-
-1. Open Arduino IDE → **File → Preferences**
-2. In "Additional boards manager URLs" paste:
-   ```
-   https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-   ```
-3. Go to **Tools → Board → Boards Manager**, search `esp32`, install **"esp32 by Espressif Systems"**
-
-### Step 3 — Install libraries
-
-Go to **Tools → Library Manager** and install both:
-
-- `Adafruit GFX Library`
-- `Adafruit ST7735 and ST7789 Library`
-
-### Step 4 — Configure board settings
-
-Go to **Tools** and set:
-
-| Setting          | Value                                |
-| ---------------- | ------------------------------------ |
-| Board            | ESP32C3 Dev Module                   |
-| USB CDC On Boot  | **Enabled** ← important              |
-| CPU Frequency    | 160 MHz                              |
-| Upload Speed     | 921600                               |
+| Setting | Value |
+|---------|-------|
+| Board | ESP32C3 Dev Module |
+| USB CDC On Boot | **Enabled** ← required, or you get no serial |
+| CPU Frequency | 160 MHz |
+| Upload Speed | 921600 |
 | Partition Scheme | **Huge APP (3MB No OTA/1MB SPIFFS)** |
 
-The partition scheme matters. The default reserves half the 4MB flash for OTA
-updates this sketch never uses, leaving a 1.31MB app partition the sketch is
-close to outgrowing. `Huge APP` gives it 3MB instead — same code, same board,
-roughly a third of the usage.
-
-Building from the command line:
+**The partition scheme matters.** The default reserves half the 4 MB flash for
+OTA updates this sketch never performs, leaving a 1.31 MB app partition the
+firmware nearly fills. `Huge APP` gives it 3 MB — same code, roughly a third of
+the usage.
 
 ```sh
-arduino-cli compile \
-  --fqbn "esp32:esp32:esp32c3:CDCOnBoot=cdc,CPUFreq=160,PartitionScheme=huge_app" \
-  clawd_mochi
+arduino-cli compile --fqbn \
+  "esp32:esp32:esp32c3:CDCOnBoot=cdc,CPUFreq=160,PartitionScheme=huge_app" clawducky
+arduino-cli upload -p /dev/cu.usbmodem1101 --fqbn \
+  "esp32:esp32:esp32c3:CDCOnBoot=cdc,CPUFreq=160,PartitionScheme=huge_app" clawducky
 ```
 
-The sketch directory must be named `clawd_mochi` to match the `.ino`, so from a
-clone named `clawd-mochi` you'll want a copy or symlink.
+The sketch directory has to be named `clawducky` to match the `.ino`.
 
-### Step 5 — Upload the sketch
+### WiFi
 
-1. Clone or download this repo
-2. Open `clawd_mochi/clawd_mochi.ino` in Arduino IDE
-3. Connect the ESP32 via USB-C
-4. Select the correct port under **Tools → Port**
-5. Click **Upload** (→ arrow button)
-6. Wait for "Hard resetting via RTS pin..." — this means success
-
----
-
-## How to use it
-
-### Connect and open the controller
-
-1. Power the ESP32 via USB-C (any USB charger or power bank)
-2. Wait ~3 seconds for the boot animation to finish
-3. On your phone or computer, go to **WiFi settings**
-4. Connect to the network: **`ClaWD-Mochi`** · password: **`clawd1234`**
-5. Open a browser and go to **`http://192.168.4.1`**
-
-You should see the web controller:
-
-<img src="pics/clawd_mochi_webpage.jpeg" alt="Webpage view" width="500"/>
-
-### Controller features
-
-| Button / control   | What it does                                    |
-| ------------------ | ----------------------------------------------- |
-| Normal eyes        | Plays wiggle + blink animation                  |
-| Squish eyes        | Plays open/close animation                      |
-| Claude Code        | Shows code display, opens terminal              |
-| Canvas             | Enter drawing mode — draw on display from phone |
-| Speed slider       | Controls animation speed (slow / normal / fast) |
-| Background color   | Changes background color of all views           |
-| Pen color          | Sets drawing color for canvas                   |
-| Display on/off     | Toggles the backlight                           |
-| ✓ done (in canvas) | Exits canvas mode                               |
-
----
-
-## 3D case
-
-The electronics case (body + back) is in the `clawd_mochi` model folder:
-
-| File                                                                                 | Description                               |
-| ------------------------------------------------------------------------------------ | ----------------------------------------- |
-| [`./models/clawd_mochi/clawd_mochi_v1.stl`](./models/clawd_mochi/clawd_mochi_v1.stl) | Main case layout with body and back parts |
-
-### Print settings
-
-| Setting      | Value                               |
-| ------------ | ----------------------------------- |
-| Material     | PLA or PETG                         |
-| Layer height | 0.15–0.20 mm                        |
-| Infill       | 15% gyroid                          |
-| Supports     | Yes — for display window overhang   |
-| Orientation  | Face-down, flat back on build plate |
-
-Suggested colors: orange PLA for body, matte black for back plate.
-
-You can also download the models from MakerWorld: [https://makerworld.com/en/models/2559505-clawd-mochi-physical-claude-code-mascot#profileId-2820000](https://makerworld.com/en/models/2559505-clawd-mochi-physical-claude-code-mascot#profileId-2820000)
-
-### 3D Clawd (no electronics)
-
-If you just want a display piece, use the separate 3D Clawd model (no screen or electronics cutouts).
-
-<img src="pics/clawd_3D_squished_eyes_4_3.png" alt="3D printed Clawd model with squished eyes" width="500"/>
-
-Model files:
-
-| File | Description |
-| ---- | ----------- |
-| [`./models/clawd_3d/clawd_3D_no_AMS.stl`](./models/clawd_3d/clawd_3D_no_AMS.stl) | Original Clawd 3D model |
-| [`./models/clawd_3d_squished_eyes/clawd_3D_squished_eyes_no_AMS.stl`](./models/clawd_3d_squished_eyes/clawd_3D_squished_eyes_no_AMS.stl) | Squished eyes variant |
-
-You can also download the models from MakerWorld: [https://makerworld.com/en/models/2576503-clawd-claude-code-mascot#profileId-2841183](https://makerworld.com/en/models/2576503-clawd-claude-code-mascot#profileId-2841183)
-
----
-
-## Assembly tips
-
-1. Print the case file (body + back) and test-fit the display before gluing anything
-2. Thread the 8 wires through the back plate slot before soldering
-3. Use double-sided tape to fix the ESP32 against the inside of the back plate
-4. Secure the display with 2× M2×6mm screws through the bezel holes
-5. Route the USB-C cable through the back plate slot and snap the back on
-
----
-
-## Customisation
-
-### Eye size and position
-
-Edit these constants near the top of `clawd_mochi.ino`:
-
-```cpp
-#define EYE_W   30    // eye width in pixels
-#define EYE_H   60    // eye height in pixels
-#define EYE_GAP 120   // gap between eyes
-#define EYE_OX  0     // horizontal offset
-#define EYE_OY  40    // vertical offset upward
+```sh
+cp wifi_credentials.h.example wifi_credentials.h   # gitignored
 ```
 
-### Logo animation duration
+Fill in your SSID and password. It joins as a station and advertises
+`clawd.local` over mDNS, falling back to its own access point
+(`ClaWD-Mochi` / `clawd1234` → `192.168.4.1`) if it can't connect.
 
-```cpp
-// In animLogoReveal() — how long logo holds after animation
-delay(1500);       // milliseconds — change this number
+> mDNS doesn't cross VLANs. If the duck is on a separate IoT network from your
+> workstation, `clawd.local` won't resolve — use the IP. Pin its DHCP lease
+> while you're there, because if the address moves, everything pointing at it
+> fails silently.
 
-// Speed of the reveal drawing stroke by stroke
-delay(speedMs(8)); // lower = faster
+---
+
+## Usage meter
+
+The device is a **dumb readout**. Something upstream hands it three percentages
+and it draws them; it has no idea Anthropic exists and stores no credentials.
+That's deliberate — it serves an unauthenticated HTTP UI to the whole LAN, and
+anyone holding it can dump its flash over USB. Nothing worth stealing should
+live there.
+
+`tools/clawducky-usage.py` is the feeder. It reads context occupancy from the
+Claude Code session transcript, pulls the 5-hour and 7-day quota percentages
+from Anthropic's OAuth usage endpoint, and pushes all three in one request.
+
+Wire it to a `Stop` hook in `~/.claude/settings.json` — the moment usage
+actually changes, so nothing runs while you aren't working:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [{
+          "type": "command",
+          "command": "~/path/to/clawducky/tools/clawducky-usage.py >/dev/null 2>&1",
+          "async": true
+      }] }
+    ]
+  }
+}
 ```
 
----
+Set `CLAWD_HOST` if `clawd.local` doesn't resolve for you. See
+[HOOKS.md](HOOKS.md) for the full setup, the status-lamp hooks, and how the
+feeder is hardened for hook use (it exits 0 unconditionally — a desk toy must
+never break your editor).
 
-## Contributing
-
-Contributions are very welcome! Here are some ideas:
-
-- **New animations** — add new expressions, transitions, or idle behaviors
-- **New views** — weather display, clock, notification badges, pixel art scenes
-- **Sound** — add a small buzzer for sound effects
-- **Sensors** — connect a touch sensor or button for physical interaction
-- **OTA updates** — add over-the-air firmware updates
-- **MQTT / Home Assistant** — connect to smart home platforms
-
-To contribute: fork the repo, make your changes, and open a pull request. Please keep the single-file structure (`clawd_mochi.ino`) so it stays easy for beginners to flash.
-
-## License
-
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
-**Note:** 3D models and media assets are licensed under **CC BY-NC-SA 4.0**.
+**macOS only** as written: the OAuth token comes from the Keychain entry Claude
+Code already maintains, so token refresh is handled for you. Ports to other
+platforms need a different credential read; everything else is portable.
 
 ---
 
-## Star History
+## HTTP API
 
-[![Star History Chart](https://api.star-history.com/svg?repos=yousifamanuel/clawd-mochi)](https://www.star-history.com/#yousifamanuel/clawd-mochi)
+Everything is a `GET`, so you can drive the whole thing with `curl`.
+
+| Endpoint | What it does |
+|----------|--------------|
+| `/face` | List available expressions as JSON |
+| `/face?f=<id>` | Show one, with its entry animation |
+| `/meter?ctx=&session=&week=` | Push percentages; any subset, omitted values persist |
+| `/meter?...&stop=1` | ...and signal a finished turn |
+| `/meter/view` | Switch to the full usage readout |
+| `/meter/overlay?on=0\|1` | Pin the quota bars to the bottom of face views |
+| `/meter/cycle?on=0\|1&sec=N&random=0\|1` | Alternate face ↔ usage |
+| `/stopface?mode=none\|fixed\|random&f=<id>` | What a finished turn looks like |
+| `/cmd?k=w\|s\|d\|a` | Original views: normal, squish, Claude Code, logo |
+| `/claude?e=working\|waiting\|done\|error\|idle` | Status-lamp states |
+| `/speed?v=1\|2\|3` | Animation speed |
+| `/backlight?on=0\|1` | Display on/off |
+| `/state` | Full device state as JSON |
+
+Settings persist to NVS and survive a power cycle — except the backlight, which
+deliberately doesn't, because booting to a black screen reads as dead hardware.
+
+---
+
+## Adding an expression
+
+Faces are data, not code. Every one is an eye shape plus an optional brow, so a
+new face is a row in `EXPRESSIONS[]`:
+
+```c
+//  id            shape     brow   tiltL tiltR  bHalf bGap  pupil pOX  anim
+{ "smug",         ES_RING,  true,     -6,   -6,    38,   7,  true,   0, AN_NONE },
+```
+
+`tiltL`/`tiltR` move the *inner* end of each brow, so one value mirrors
+correctly across the face — positive drops it toward the nose (angry), negative
+raises it. Animations layer runtime deltas over that resting pose
+(`drawExpressionFrame`), which is why a new motion is a sequence of numbers
+rather than another draw function.
+
+The web UI builds its buttons from `/face`, so the firmware stays the single
+source of truth for which expressions exist.
+
+---
+
+## Credits
+
+Built on **[clawd-mochi](https://github.com/yousifamanuel/clawd-mochi)** by
+[yousifamanuel](https://github.com/yousifamanuel) — the original concept, the
+web UI, the eye animations, the terminal view, the drawing canvas, and the
+3D-printable case. **The models are still only in that repo**; go there for
+anything you intend to print, and give it a star while you're at it.
+
+This is a separate project rather than a pull request because the direction
+diverged: the usage meter and the Claude Code telemetry integration are a
+different thing from a desk toy, and upstream isn't currently taking patches.
+
+MIT, same as the original.

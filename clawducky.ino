@@ -627,6 +627,10 @@ void settingsTouch() {
   settingsSaveAt = millis() + 3000;
 }
 
+// NVS keys stay terse and are deliberately NOT kept in step with the /state
+// field names: renaming a key orphans whatever is already stored under the old
+// one, silently resetting a user's settings on their next flash. The JSON
+// surface is the API; these are just storage slots.
 void settingsSave() {
   prefs.begin("clawd", false);
   prefs.putBool ("ovl",    mtrOverlay);
@@ -1627,29 +1631,29 @@ async function clearAll() {
       b.classList.remove('on'); b.classList.add('dim');
     }
     // Reflect persisted device settings rather than markup defaults.
-    ovOn = !!j.ovl;
+    ovOn = !!j.overlay;
     const ob = document.getElementById('ovBtn');
     ob.innerHTML = ovOn ? '\u25FB usage bars on' : '\u25FB usage bars off';
     ob.classList.toggle('on', ovOn); ob.classList.toggle('dim', !ovOn);
 
-    cyOn = !!j.cyc;
+    cyOn = !!j.cycle;
     const cb = document.getElementById('cyBtn');
     cb.innerHTML = cyOn ? '\u21BB cycle on' : '\u21BB cycle off';
     cb.classList.toggle('on', cyOn); cb.classList.toggle('dim', !cyOn);
 
-    document.getElementById('cySec').value = j.cycsec || 10;
-    document.getElementById('cyRnd').checked = !!j.cycrnd;
+    document.getElementById('cySec').value = j.cyclesec || 10;
+    document.getElementById('cyRnd').checked = !!j.cyclerandom;
 
     await loadFaces();
     const sf = document.getElementById('sfSel');
-    sf.value = j.sfmode === 'fixed' ? (j.sfface || 'none') : (j.sfmode || 'none');
+    sf.value = j.stopmode === 'fixed' ? (j.stopface || 'none') : (j.stopmode || 'none');
 
     // The device is the source of truth for what's on screen. Without this the
     // UI always came back claiming "Normal eyes" no matter what was showing.
     activeView = j.view;
     document.querySelectorAll('.vbtn').forEach(b => b.classList.remove('active'));
     if (j.view === VIEW_EXPRESSION) {
-      const fb = document.querySelector('.vbtn[data-f="' + j.expr + '"]');
+      const fb = document.querySelector('.vbtn[data-f="' + j.expression + '"]');
       if (fb) fb.classList.add('active');
     } else {
       const vb = document.querySelector('.vbtn[data-v="' + j.view + '"]');
@@ -1925,14 +1929,14 @@ void routeState() {
   j += ",\"bl\":";     j += backlightOn ? "true" : "false";
   j += ",\"speed\":";  j += animSpeed;
   j += ",\"claude\":"; j += claudeState;
-  j += ",\"ovl\":";    j += mtrOverlay   ? "true" : "false";
-  j += ",\"cyc\":";    j += mtrCycle     ? "true" : "false";
-  j += ",\"cycsec\":"; j += mtrCycleSec;
-  j += ",\"cycrnd\":"; j += mtrCycleRand ? "true" : "false";
-  j += ",\"sfmode\":\"";
+  j += ",\"overlay\":";    j += mtrOverlay   ? "true" : "false";
+  j += ",\"cycle\":";    j += mtrCycle     ? "true" : "false";
+  j += ",\"cyclesec\":"; j += mtrCycleSec;
+  j += ",\"cyclerandom\":"; j += mtrCycleRand ? "true" : "false";
+  j += ",\"stopmode\":\"";
   j += stopFaceMode == SF_RANDOM ? "random" : stopFaceMode == SF_FIXED ? "fixed" : "none";
-  j += "\",\"sfface\":\"";  j += EXPRESSIONS[stopFaceIdx].id;  j += "\"";
-  j += ",\"expr\":\"";      j += EXPRESSIONS[currentExpr].id;  j += "\"";
+  j += "\",\"stopface\":\"";  j += EXPRESSIONS[stopFaceIdx].id;  j += "\"";
+  j += ",\"expression\":\"";      j += EXPRESSIONS[currentExpr].id;  j += "\"";
   j += ",\"sta\":";    j += staConnected ? "true" : "false";
   j += ",\"ip\":\"";
   j += staConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();

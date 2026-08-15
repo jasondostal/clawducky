@@ -188,6 +188,20 @@ Everything is a `GET`, so you can drive the whole thing with `curl`.
 | `/backlight?on=0\|1` | Display on/off |
 | `/state` | Full device state as JSON |
 
+`/state` returns everything the device knows about itself, which is how the web
+UI restores its own selection after a reload rather than guessing:
+
+| Field | Meaning |
+|-------|---------|
+| `view` | Current view (0 eyes, 1 squish, 2 code, 3 canvas, 4 expression, 5 meter) |
+| `expression` | Which face is on screen |
+| `overlay` | Quota bars pinned to the bottom of face views |
+| `cycle` / `cyclesec` / `cyclerandom` | Auto-cycle state, interval, randomize |
+| `stopmode` | On-stop policy: `none`, `fixed` or `random` |
+| `stopface` | Which face `fixed` uses — remembered while you toggle modes |
+| `busy` | Device is mid-animation and won't answer promptly |
+| `speed`, `bl`, `sta`, `ip` | Animation speed, backlight, WiFi mode, address |
+
 Settings persist to NVS and survive a power cycle — except the backlight, which
 deliberately doesn't, because booting to a black screen reads as dead hardware.
 

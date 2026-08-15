@@ -60,3 +60,46 @@ Event mapping rationale:
 
 Manual control from the web UI (any `/cmd` press) also clears hook-driven
 state, so the crab never gets stuck in a mode.
+
+## Usage meter
+
+`tools/clawd-usage.py` feeds the `/meter` display: context-window occupancy
+from the session transcript, plus the 5-hour and 7-day quota percentages from
+Anthropic's OAuth usage endpoint.
+
+The device never sees a credential. It receives three percentages and renders
+them — it has no idea Anthropic exists. That matters because the crab serves an
+unauthenticated HTTP UI to the whole LAN and its flash can be dumped over USB
+by anyone holding it.
+
+Add to the same `Stop` block as the status hook:
+
+```json
+"Stop": [
+  { "hooks": [
+      { "type": "command", "command": "(curl -sm2 'http://clawd.local/claude?e=done' >/dev/null 2>&1 &)" },
+      { "type": "command", "command": "(~/working/clawd-mochi/tools/clawd-usage.py >/dev/null 2>&1 &)" }
+  ] }
+]
+```
+
+`Stop` is the right and only necessary trigger: it is the moment usage actually
+changes. Set `CLAWD_HOST` if the crab isn't at the default address.
+
+Behaviour worth knowing:
+
+- **Exits 0 no matter what.** A non-zero exit from a hook surfaces as an error
+  in your session, so every failure path is swallowed. A desk toy must never
+  break the editor.
+- **Bounded at ~1.5s worst case** when the crab is unreachable, and it
+  backgrounds anyway, so being off the network costs you nothing.
+- **Quota is cached 60s.** Those numbers crawl; there's no reason to hit the
+  API every turn. Context is always read fresh from the transcript.
+- **The token** is read from the macOS Keychain (`Claude Code-credentials`),
+  the same one Claude Code already maintains, so refresh is handled for you.
+
+Check what it would send without sending it:
+
+```sh
+tools/clawd-usage.py --print
+```

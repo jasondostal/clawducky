@@ -2375,7 +2375,17 @@ void setup() {
   server.begin();
 
   // WiFi info stays on screen — first button press triggers setView/cmd
-  // which will replace it with the correct view
+  // which will replace it with the correct view.
+  //
+  // Unless the rotation was left on. uiStarted gates the cycle as well as the
+  // idle animations, and nothing but a web request ever set it, so a duck
+  // rebooted with cyc=true sat on this screen forever waiting to be poked —
+  // the setting survived the power cycle and the behaviour didn't. Turning the
+  // cycle on is a standing instruction; honour it without needing a nudge.
+  if (mtrCycle) {
+    uiStarted = true;
+    nextCycle = millis() + (uint32_t)mtrCycleSec * 1000UL;
+  }
 }
 
 // ═════════════════════════════════════════════════════════════

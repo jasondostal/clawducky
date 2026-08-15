@@ -1189,6 +1189,7 @@ body{background:#1c1c20;font-family:'Courier New',monospace;color:#e8e4dc;
 
 .sec{width:100%;max-width:390px;font-size:10px;color:#8a8278;
   letter-spacing:2px;font-weight:bold;padding:0 2px}
+.sec .hint{color:#5a5048;letter-spacing:1px;font-weight:normal;text-transform:none}
 
 /* Busy bar */
 .busy{width:100%;max-width:390px;height:2px;background:#2e2a28;
@@ -1322,7 +1323,10 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
   </span>
 </div>
 
-<div class="sec">// views</div>
+<!-- The corner ticks are the only thing that decides what the rotation shows;
+     highlighting a view picks what's on screen NOW and says nothing about the
+     cycle. Spelled out because a title= tooltip is invisible on a phone. -->
+<div class="sec">// views <span class="hint">&#8212; corner tick = in the cycle</span></div>
 <div class="vgrid" id="views">
   <button class="vbtn active" data-v="0" onclick="setView(0)">
     <input type="checkbox" class="cyk" data-cy="eyes" title="include in cycle"
@@ -1926,14 +1930,17 @@ void routeMeterCycle() {
     mtrCycleRand = server.arg("random").toInt() != 0;
   if (server.hasArg("mix"))
     cycleMix = server.arg("mix").toInt() != 0;
+  // `on` belongs to whichever thing the request names: with an item it's that
+  // view's membership, without one it's the rotation itself. Reading it as both
+  // meant ticking a view silently started the cycle and unticking one stopped
+  // it, while the UI's toggle went on claiming the opposite.
   if (server.hasArg("item")) {
     const int8_t slot = cycleSlotFor(server.arg("item"));
     if (slot >= 0) {
       if (server.arg("on").toInt() != 0) cycleMask |=  (1 << slot);
       else                               cycleMask &= ~(1 << slot);
     }
-  }
-  if (server.hasArg("on")) {
+  } else if (server.hasArg("on")) {
     mtrCycle = server.arg("on").toInt() != 0;
     if (mtrCycle) {
       // Turning the rotation on is an explicit instruction, so it may take over

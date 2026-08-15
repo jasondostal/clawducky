@@ -894,13 +894,6 @@ body{background:#1c1c20;font-family:'Courier New',monospace;color:#e8e4dc;
 
 /* View grid */
 .vgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;max-width:390px}
-.fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;width:100%;max-width:390px}
-.fbtn{background:#252428;border:1.5px solid #38343a;border-radius:10px;
-      padding:8px 2px;cursor:pointer;text-align:center;color:#e8e4dc;font:inherit}
-.fbtn:active{transform:scale(.94)}
-.fbtn .fi{font-size:15px;display:block;line-height:1;color:#c96a3e;margin-bottom:3px}
-.fbtn .fn{font-size:8px;color:#8a8278;letter-spacing:.3px}
-.fbtn.active{border-color:#c96a3e;background:#201408}
 .vbtn{background:#252428;border:1.5px solid #38343a;border-radius:12px;
   color:#d8d4cc;font-family:'Courier New',monospace;
   padding:14px 6px 10px;cursor:pointer;text-align:center;
@@ -1004,7 +997,7 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
 </div>
 
 <div class="sec">// faces</div>
-<div class="fgrid" id="faces"></div>
+<div class="vgrid" id="faces"></div>
 
 <div class="sec">// speed</div>
 <div class="speed-row">
@@ -1091,13 +1084,18 @@ async function req(path) {
 }
 
 // ── Faces ───────────────────────────────────────────────────────
-// Glyphs are UI-side only; the firmware owns the canonical list, so adding a
-// row to EXPRESSIONS[] makes a button appear here with no HTML edit.
-const FACE_GLYPH = {
-  disapproval: '&#3232;_&#3232;', skeptical: '&#8857;_&#9673;',
-  angry:       '&#9699;_&#9700;', sideeye:   '&#8212;&#8226;&#8226;',
-  alert:       'O_O',             happy:     '^_^',
-  sleepy:      '&#8212;_&#8212;',  dead:      'x_x'
+// Labels are UI-side decoration; the firmware owns the canonical list, so
+// adding a row to EXPRESSIONS[] makes a button appear here with no HTML edit.
+// Unknown ids still render, just without a glyph or hint.
+const FACE_META = {
+  disapproval: ['&#3232;_&#3232;', 'Disapproval', 'the stare'],
+  skeptical:   ['&#8857;_&#9673;', 'Skeptical',   'one brow up'],
+  angry:       ['&#9699;_&#9700;', 'Angry',       'brows down'],
+  sideeye:     ['&#9673;&#9673;_', 'Side-eye',    'pupils slide'],
+  alert:       ['O_O',             'Alert',       'pops wide'],
+  happy:       ['^_^',             'Happy',       'squint smile'],
+  sleepy:      ['&#8212;_&#8212;', 'Sleepy',      'slow droop'],
+  dead:        ['x_x',             'Dead',        'shakes it off']
 };
 
 async function loadFaces() {
@@ -1107,21 +1105,24 @@ async function loadFaces() {
   const box = document.getElementById('faces');
   box.innerHTML = '';
   for (const id of list) {
+    const m = FACE_META[id] || ['&#9632;&#9632;', id, ''];
     const b = document.createElement('button');
-    b.className = 'fbtn';
+    b.className = 'vbtn';
     b.dataset.f = id;
-    b.innerHTML = '<span class="fi">' + (FACE_GLYPH[id] || '&#9632;&#9632;') +
-                  '</span><span class="fn">' + id + '</span>';
+    b.innerHTML = '<span class="ic">' + m[0] + '</span>' +
+                  '<span class="nm">' + m[1] + '</span>' +
+                  '<span class="ht">' + m[2] + '</span>';
     b.onclick = () => setFace(id);
     box.appendChild(b);
   }
 }
 
 async function setFace(id) {
+  if (isBusy || termOpen || canvasOpen) return;
   if (!await req('/face?f=' + encodeURIComponent(id))) return;
-  document.querySelectorAll('.fbtn').forEach(
+  activeView = -1;
+  document.querySelectorAll('.vbtn').forEach(
     b => b.classList.toggle('active', b.dataset.f === id));
-  document.querySelectorAll('.vbtn').forEach(b => b.classList.remove('active'));
 }
 
 async function waitNotBusy() {
@@ -1158,9 +1159,10 @@ async function setView(v) {
   const keys = ['w','s','d'];
   if (!await req('/cmd?k=' + keys[v])) return;
   activeView = v;
+  // Face buttons share the .vbtn class and carry no data-v, so this clears
+  // them for free — NaN never matches.
   document.querySelectorAll('.vbtn').forEach(b =>
     b.classList.toggle('active', parseInt(b.dataset.v) === v));
-  document.querySelectorAll('.fbtn').forEach(b => b.classList.remove('active'));
   if (v === 2) {
     termOpen = true;
     document.getElementById('twrap').classList.add('open');

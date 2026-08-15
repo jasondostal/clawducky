@@ -28,7 +28,8 @@ import urllib.request
 
 HOST = os.environ.get("CLAWD_HOST", "clawducky.local")
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-CACHE = "/tmp/.clawd-usage-cache.json"
+CACHE = "/tmp/.clawducky-usage-cache.json"
+RUNSTAMP = "/tmp/.clawducky-last-run"   # touched every run, for hook debugging
 CACHE_TTL = 60          # seconds; quota crawls, no need to poll every turn
 API_TIMEOUT = 3        # the usage endpoint, cached so it is rarely hit
 PUSH_TIMEOUT = 1.5     # the crab is on the LAN; do not stall a turn for it
@@ -150,6 +151,14 @@ def newest_transcript():
 
 
 def main():
+    # A hook that never fires and a hook that fires but fails look identical
+    # from the outside. This makes the difference observable.
+    try:
+        with open(RUNSTAMP, "w") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+    except Exception:
+        pass
+
     transcript = None
     if not sys.stdin.isatty():
         try:

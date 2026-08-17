@@ -135,6 +135,58 @@ rather than a stale default.
 `GET /meter/cycle?on=1&sec=10&random=1` cycles between face and usage, picking
 a fresh random face each time round.
 
+## Avatar mode — the duck is Claude's face
+
+Everything above maps lifecycle events to reactions the *device* was
+configured to have. Avatar mode inverts that: Claude picks the face, in the
+moment, based on how the work is actually going — the duck stops being a
+status lamp and becomes Claude's face. While it's on, the cycle, the stop
+face, and the `/claude?e=` takeovers all stand down; the display shows
+whatever `/avatar?face=` last said (plus idle blinks, because a face that
+never blinks is a photograph). The badges still run — they carry lifecycle,
+the face carries mood.
+
+```sh
+curl 'http://clawducky.local/avatar?on=1'            # possess
+curl 'http://clawducky.local/avatar?face=thinking'   # Claude wears a face
+curl 'http://clawducky.local/avatar?on=0'            # release
+```
+
+Also a toggle in the web UI. Setting a face with the mode off is a polite
+no-op — a stale hook can't repossess a duck you've released.
+
+The one autonomous behaviour left is staleness: a face nobody has refreshed
+in 15 minutes sags to `sleepy`. Hooks are fire-and-forget and sessions die;
+a duck stuck on `angry` all night because a session got killed is worse
+than no avatar at all.
+
+`tools/duckface` is the write half:
+
+```sh
+tools/duckface disapproval
+CLAWD_HOST=<duck-ip> tools/duckface eureka   # if mDNS won't cross your VLANs
+```
+
+It only fires when an `en*` interface holds a `192.168.x` address, so a
+tethered, VPN'd, or coffee-shop laptop never sprays curls off the home LAN —
+a VPN into the house rides a `utun` interface and deliberately fails the
+guard. Always exits 0.
+
+To let Claude actually use it, drop something like this in a `CLAUDE.md`
+(global for everywhere, or per-project) and allow the command:
+
+> When avatar mode is on (check `/state`), express how the work is going by
+> running `~/working/clawducky/tools/duckface <face>` when your read on it
+> changes: `thinking` while forming an opinion, `focused` mid-edit,
+> `debugging` when tests fight back, `eureka`/`proud` when they stop,
+> `overwhelmed`, `smug`, and `disapproval` as deserved. Change the face when
+> something is worth expressing, not every turn.
+
+The faces for the job, beyond the original eight: `thinking`, `focused`,
+`debugging`, `smug`, `eureka`, `overwhelmed`, `staring`, `proud`. Some carry
+a corner accent glyph (sweat drop, spark, thinking dots) in the top-left —
+the badges own the top-right, so the two never collide.
+
 ## Corner badges
 
 Two chips in the top-right, and the only thing on the device that never takes

@@ -1,0 +1,28 @@
+#!/bin/sh
+# duckface <face> — put a face on the clawducky.
+#
+# This is the write half of avatar mode: Claude calls it mid-work when its
+# read on the work changes. The device decides nothing; it wears what the
+# last call said (avatar mode must be on — the web UI toggle or
+# /avatar?on=1 — otherwise the device politely ignores the face).
+#
+# Home-LAN guard: only fires when a real network interface (en*) holds a
+# 192.168.x address, so a tethered / VPN'd / coffee-shop laptop never sprays
+# curls at a stranger's LAN. A VPN into the house shows up on a utun
+# interface, which deliberately does NOT pass the guard — hooks firing over
+# a tunnel was the exact reason the first hook install got ripped out.
+# mDNS doesn't cross VLANs; if clawducky.local doesn't resolve, export
+# CLAWD_HOST=<duck-ip> in your shell profile.
+#
+# Exits 0 no matter what. A desk toy must never break the editor.
+
+[ -n "$1" ] || exit 0
+HOST="${CLAWD_HOST:-clawducky.local}"
+
+for i in en0 en1; do
+  if ifconfig "$i" 2>/dev/null | grep -q "inet 192\.168\."; then
+    (curl -sm2 "http://$HOST/avatar?face=$1" >/dev/null 2>&1 &)
+    break
+  fi
+done
+exit 0

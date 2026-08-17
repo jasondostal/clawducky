@@ -116,7 +116,24 @@ struct Expression {
   bool        pupil;     // draw a pupil inside the ring
   int8_t      pupilOX;   // pupil offset — this is what sells side-eye
   uint8_t     anim;      // flourish played on entry, and on idle where it loops
+  uint8_t     shapeR;    // right eye's own shape, or ES_SAME for a matched pair
+  int8_t      pupilOY;   // vertical pupil offset — thinking looks up, staring doesn't
+  uint8_t     glyph;     // manga accent mark in the top-left corner, GL_NONE for none
 };
+
+// A pupil only makes sense inside a ring, so per-eye faces (debugging) get it
+// on whichever eyes are rings and nothing else — no flag needed per side.
+#define ES_SAME 0xFF
+
+// Accent glyphs — one small mark, top-left (the badges own the top-right).
+// Composable with any face: sweat on focused is a different sentence than
+// sweat on happy. Manga shorthand carries a lot for one draw routine.
+#define GL_NONE  0
+#define GL_SWEAT 1   // strain
+#define GL_SPARK 2   // delight, victory
+#define GL_DOTS  3   // processing…
+#define GL_BANG  4   // surprise
+#define GL_VEIN  5   // anime rage
 
 // Everything an animation is allowed to vary about a resting face. Keeping the
 // deltas in one struct means a new motion is a new sequence of numbers rather
@@ -373,6 +390,8 @@ void drawSquishEyes(bool closed = false) {
 #define ES_ARC    4   // ^ chevron
 #define ES_DISC   5   // filled disc
 #define ES_THA    6   // the actual Kannada ಠ: bowl + pupil + sideways-J headstroke
+#define ES_RECTS  7   // squished rect — the heads-down focus bar
+#define ES_LID    8   // half-lidded — a fat bar low in the socket; smug lives here
 
 // Expression faces get their own geometry rather than reusing the EYE_*
 // constants. Those describe a tall 30x60 eye sitting high on the panel, which
@@ -389,15 +408,24 @@ void drawSquishEyes(bool closed = false) {
 #define AN_DROOP  3   // sag, catch itself, sag further: nodding off
 
 const Expression EXPRESSIONS[] = {
-  //  id             shape     brow   tiltL tiltR  bHalf bGap  pupil pOX  anim
-  { "disapproval",   ES_THA,   false,     0,    0,    38,   7,  false,  0, AN_NONE  },  // ಠ_ಠ, the real letter
-  { "skeptical",     ES_RING,  true,    -15,    8,    38,   7,  true,   0, AN_NONE  },
-  { "angry",         ES_RING,  true,     16,   16,    40,   4,  true,   0, AN_NONE  },
-  { "sideeye",       ES_RING,  true,      0,    0,    38,   7,  true,  15, AN_NONE  },
-  { "alert",         ES_RING,  false,     0,    0,     0,   0,  false,  0, AN_POP   },  // O_O
-  { "happy",         ES_ARC,   false,     0,    0,     0,   0,  false,  0, AN_NONE  },  // ^_^
-  { "sleepy",        ES_FLAT,  false,     0,    0,     0,   0,  false,  0, AN_DROOP },  // —_—
-  { "dead",          ES_CROSS, false,     0,    0,     0,   0,  false,  0, AN_SHAKE },  // x_x
+  //  id             shape     brow   tiltL tiltR  bHalf bGap  pupil pOX  anim      shapeR   pOY  glyph
+  { "disapproval",   ES_THA,   false,     0,    0,    38,   7,  false,  0, AN_NONE,  ES_SAME,   0, GL_NONE  },  // ಠ_ಠ, the real letter
+  { "skeptical",     ES_RING,  true,    -15,    8,    38,   7,  true,   0, AN_NONE,  ES_SAME,   0, GL_NONE  },
+  { "angry",         ES_RING,  true,     16,   16,    40,   4,  true,   0, AN_NONE,  ES_SAME,   0, GL_NONE  },
+  { "sideeye",       ES_RING,  true,      0,    0,    38,   7,  true,  15, AN_NONE,  ES_SAME,   0, GL_NONE  },
+  { "alert",         ES_RING,  false,     0,    0,     0,   0,  false,  0, AN_POP,   ES_SAME,   0, GL_NONE  },  // O_O
+  { "happy",         ES_ARC,   false,     0,    0,     0,   0,  false,  0, AN_NONE,  ES_SAME,   0, GL_NONE  },  // ^_^
+  { "sleepy",        ES_FLAT,  false,     0,    0,     0,   0,  false,  0, AN_DROOP, ES_SAME,   0, GL_NONE  },  // —_—
+  { "dead",          ES_CROSS, false,     0,    0,     0,   0,  false,  0, AN_SHAKE, ES_SAME,   0, GL_NONE  },  // x_x
+  // The working family — what Claude's face does while it's in your code.
+  { "thinking",      ES_RING,  true,    -14,   -4,    38,   7,  true,  -9, AN_NONE,  ES_SAME, -11, GL_DOTS  },  // reading, forming an opinion
+  { "focused",       ES_RECTS, true,     10,   10,    38,   7,  false,  0, AN_NONE,  ES_SAME,   0, GL_NONE  },  // heads-down, mid-edit
+  { "debugging",     ES_RING,  false,     0,    0,    38,   7,  true,   0, AN_NONE,  ES_FLAT,   0, GL_NONE  },  // magnifier out
+  { "smug",          ES_LID,   true,     -8,   -8,    38,   7,  false,  0, AN_NONE,  ES_SAME,   0, GL_NONE  },  // it worked first try
+  { "eureka",        ES_RING,  false,     0,    0,     0,   0,  false,  0, AN_POP,   ES_SAME,   0, GL_SPARK },  // found it. one character.
+  { "overwhelmed",   ES_RECT,  true,    -18,  -18,    38,   7,  false,  0, AN_NONE,  ES_SAME,   0, GL_SWEAT },  // this file is load-bearing
+  { "staring",       ES_RING,  false,     0,    0,     0,   0,  true,   0, AN_NONE,  ES_SAME,   2, GL_NONE  },  // waiting on you. no rush.
+  { "proud",         ES_ARC,   false,     0,    0,     0,   0,  false,  0, AN_NONE,  ES_SAME,   0, GL_SPARK },  // shipped it
 };
 const uint8_t EXPRESSION_COUNT = sizeof(EXPRESSIONS) / sizeof(EXPRESSIONS[0]);
 
@@ -409,6 +437,8 @@ int16_t eyeTopExtent(uint8_t shape) {
     case ES_DISC:  return EX_R;
     case ES_FLAT:  return EX_THK / 2;
     case ES_THA:   return EX_R + 25;   // bowl + fused bar + the hook's rise
+    case ES_RECTS: return 13;
+    case ES_LID:   return 2;           // the lid sits low; a brow above it reads as lashes
     case ES_CROSS: return EX_R;
     case ES_ARC:   return 22;
     default:       return EYE_H / 2;   // ES_RECT
@@ -468,9 +498,58 @@ void drawEyeShape(uint8_t shape, int16_t cx, int16_t cy, int16_t r, uint16_t col
         tft.drawLine(cx,     cy - 20 + t, cx + r, cy + 20 + t, col);
       }
       break;
+    case ES_RECTS:
+      // The focus bar: same eye, most of it closed. Concentration is mostly lid.
+      tft.fillRect(cx - EYE_W / 2, cy - 13, EYE_W, 26, col);
+      break;
+    case ES_LID:
+      // Half-lidded: a fat bar low in the socket. All smugness is here.
+      tft.fillRect(cx - r + 4, cy + 1, (r - 4) * 2, 18, col);
+      break;
     default:  // ES_RECT
       tft.fillRect(cx - EYE_W / 2, cy - EYE_H / 2, EYE_W, EYE_H, col);
       break;
+  }
+}
+
+// The accent glyph — one manga mark, top-left corner. The badges own the
+// top-right, so the two never fight. Drawn after the face so it always lands
+// on top, skipped during a blink so the mark doesn't outlive the eyes.
+void drawGlyph(uint8_t g) {
+  const int16_t gx = 44, gy = 46;
+  switch (g) {
+    case GL_SWEAT: {
+      // teardrop: a disc with a triangle roof
+      const uint16_t blue = tft.color565(110, 175, 230);
+      tft.fillCircle(gx, gy + 12, 13, blue);
+      tft.fillTriangle(gx, gy - 18, gx - 12, gy + 8, gx + 12, gy + 8, blue);
+      break;
+    }
+    case GL_SPARK:
+      // 4-point star: two skinny triangles per axis
+      tft.fillTriangle(gx - 20, gy, gx, gy - 6, gx, gy + 6, C_AMBER);
+      tft.fillTriangle(gx + 20, gy, gx, gy - 6, gx, gy + 6, C_AMBER);
+      tft.fillTriangle(gx, gy - 20, gx - 6, gy, gx + 6, gy, C_AMBER);
+      tft.fillTriangle(gx, gy + 20, gx - 6, gy, gx + 6, gy, C_AMBER);
+      break;
+    case GL_DOTS:
+      for (int8_t i = 0; i < 3; i++)
+        tft.fillCircle(gx - 20 + i * 20, gy, 6, C_BLACK);
+      break;
+    case GL_BANG:
+      tft.fillRect(gx - 5, gy - 22, 10, 28, C_AMBER);
+      tft.fillCircle(gx, gy + 18, 6, C_AMBER);
+      break;
+    case GL_VEIN:
+      // the popped-vein cross: four small arcs, stamped as ring quarters
+      for (int8_t q = 0; q < 4; q++) {
+        const int16_t ox = (q & 1) ? 9 : -9;
+        const int16_t oy = (q & 2) ? 9 : -9;
+        tft.fillCircle(gx + ox, gy + oy, 9, C_RED);
+      }
+      tft.fillCircle(gx, gy, 8, animBgColor);   // punch the middle back out
+      break;
+    default: break;
   }
 }
 
@@ -498,15 +577,19 @@ void drawExpressionFrame(uint8_t idx, const FrameDelta& d) {
   const int16_t cy  = EX_CY + d.eyeDY;
   const int16_t lcx = DISP_W / 2 - EX_DX + d.eyeDX;
   const int16_t rcx = DISP_W / 2 + EX_DX + d.eyeDX;
-  const uint8_t shape = d.blink ? ES_FLAT : e.shape;
-  const int16_t r     = EX_R + d.radiusD;
+  const uint8_t shapeL = d.blink ? ES_FLAT : e.shape;
+  const uint8_t shapeR = d.blink ? ES_FLAT
+                       : (e.shapeR == ES_SAME ? e.shape : e.shapeR);
+  const int16_t r      = EX_R + d.radiusD;
 
-  drawEyeShape(shape, lcx, cy, r, C_BLACK);
-  drawEyeShape(shape, rcx, cy, r, C_BLACK);
+  drawEyeShape(shapeL, lcx, cy, r, C_BLACK);
+  drawEyeShape(shapeR, rcx, cy, r, C_BLACK);
   if (e.pupil && !d.blink) {
+    // A pupil only lands in a ring — a mixed face (debugging) keeps its slit clean.
     const int16_t pr = (r - EX_THK) / 2;
-    tft.fillCircle(lcx + d.pupilDX, cy, pr, C_BLACK);
-    tft.fillCircle(rcx + d.pupilDX, cy, pr, C_BLACK);
+    const int16_t py = cy + e.pupilOY;
+    if (shapeL == ES_RING) tft.fillCircle(lcx + d.pupilDX, py, pr, C_BLACK);
+    if (shapeR == ES_RING) tft.fillCircle(rcx + d.pupilDX, py, pr, C_BLACK);
   }
   if (e.brow) {
     // Anchor to the top of the eye, then rise by the tilt so an angled brow
@@ -519,6 +602,7 @@ void drawExpressionFrame(uint8_t idx, const FrameDelta& d) {
     drawBrow(lcx, browY, e.tiltL, e.browHalf, true,  C_BLACK);
     drawBrow(rcx, browY, e.tiltR, e.browHalf, false, C_BLACK);
   }
+  if (e.glyph != GL_NONE && !d.blink) drawGlyph(e.glyph);
   drawMeterOverlay();
   drawStatusBadges();
 }
@@ -637,8 +721,8 @@ bool     mtrCycleRand = false;   // pick at random rather than in order
 #define CY_SQUISH  1
 #define CY_METER   2
 #define CY_FACE0   3
-#define CY_SLOTS   (CY_FACE0 + 8)
-uint16_t cycleMask = 0xFFFF;     // everything, until told otherwise
+#define CY_SLOTS   (CY_FACE0 + EXPRESSION_COUNT)
+uint32_t cycleMask = 0xFFFFFFFF; // everything, until told otherwise
 int8_t   cycleSlot = -1;         // last non-meter slot shown
 bool     cycleMix  = true;       // interleave the meter between faces
 bool     cycleOnMeter = false;   // which half of the interleave we're on
@@ -650,6 +734,18 @@ bool     cycleOnMeter = false;   // which half of the interleave we're on
 #define SF_RANDOM 2
 uint8_t  stopFaceMode = SF_NONE;
 uint8_t  stopFaceIdx  = 0;
+
+// ── Avatar mode ───────────────────────────────────────────────
+// The duck as Claude's face. While this is on, everything that changes the
+// face on its own — the cycle, the stop face, the /claude takeovers — stands
+// down, and the face is whatever /avatar?face= last said. The one autonomous
+// behaviour left is the staleness drift: hooks are fire-and-forget and
+// sessions die, and a duck stuck on `angry` all night because a session got
+// killed is worse than no avatar at all. So a face nobody has refreshed in
+// 15 minutes sags to sleepy, and the sleep itself never goes stale.
+#define AVATAR_STALE_MS (15UL * 60UL * 1000UL)
+bool     avatarMode = false;
+uint32_t avatarSeen = 0;         // 0 = nothing pushed yet / already drifted
 
 // ── Persistence ───────────────────────────────────────────────
 // Settings survive a power cycle. Writes are coalesced rather than immediate:
@@ -677,8 +773,11 @@ void settingsSave() {
   prefs.putUChar("sfmode", stopFaceMode);
   prefs.putUChar("sfidx",  stopFaceIdx);
   prefs.putUChar("speed",  animSpeed);
-  prefs.putUShort("cycmask", cycleMask);
+  // "cycmask" (uint16) died when the table outgrew 16 bits; a new key rather
+  // than a re-typed old one, so a downgrade doesn't read garbage.
+  prefs.putUInt ("cymask2", cycleMask);
   prefs.putBool ("cycmix",  cycleMix);
+  prefs.putBool ("avatar",  avatarMode);
   prefs.end();
   settingsDirty = false;
 }
@@ -692,8 +791,9 @@ void settingsLoad() {
   stopFaceMode = prefs.getUChar ("sfmode", SF_NONE);
   stopFaceIdx  = prefs.getUChar ("sfidx",  0);
   animSpeed    = prefs.getUChar ("speed",  1);
-  cycleMask    = prefs.getUShort("cycmask", 0xFFFF);
+  cycleMask    = prefs.getUInt  ("cymask2", 0xFFFFFFFF);
   cycleMix     = prefs.getBool  ("cycmix",  true);
+  avatarMode   = prefs.getBool  ("avatar",  false);
   prefs.end();
   // Clamp everything: a firmware change can shrink EXPRESSIONS[] under a
   // stored index, and a corrupt read shouldn't brick the boot.
@@ -902,6 +1002,7 @@ void badgeTick() {
 // React to a finished turn. Also becomes the cycle's home face, so a cycling
 // crab alternates between the meter and whatever face the last turn produced.
 void triggerStopFace() {
+  if (avatarMode) return;   // the face isn't the stop hook's to take
   if (stopFaceMode == SF_NONE || termMode || busy) return;
   const int8_t sel = (stopFaceMode == SF_RANDOM)
                    ? randomStopFace() : (int8_t)stopFaceIdx;
@@ -930,7 +1031,7 @@ void stopCycling() {
 
 bool cycleSlotEnabled(uint8_t slot) {
   if (slot >= CY_FACE0 && (slot - CY_FACE0) >= EXPRESSION_COUNT) return false;
-  return cycleMask & (1 << slot);
+  return cycleMask & (1UL << slot);
 }
 
 // A random stop face draws from the same ticks as the rotation. Unticking a
@@ -1009,6 +1110,7 @@ void showCycleSlot(uint8_t slot) {
 
 // Advance the cycle to its next enabled view.
 void meterCycleTick() {
+  if (avatarMode) return;   // the face isn't the cycle's to take either
   if (!mtrCycle || busy || termMode || !uiStarted) return;
   if (currentView != VIEW_METER && currentView != VIEW_EYES_NORMAL
       && currentView != VIEW_EYES_SQUISH && currentView != VIEW_EXPRESSION) return;
@@ -1267,6 +1369,18 @@ void enterClaude(uint8_t s) {
 
 void claudeTick() {
   if (claudeState == CL_NONE) {
+    // Avatar staleness: a face nobody refreshed in a while sags to sleepy.
+    if (avatarMode && avatarSeen && millis() - avatarSeen > AVATAR_STALE_MS
+        && !busy && !termMode && uiStarted) {
+      avatarSeen = 0;                       // the sleep itself never goes stale
+      const int8_t s = expressionIndex("sleepy");
+      if (s >= 0 && !(currentView == VIEW_EXPRESSION && currentExpr == (uint8_t)s)) {
+        currentView = VIEW_EXPRESSION;
+        currentExpr = (uint8_t)s;
+        animExpression((uint8_t)s);
+        nextIdleBlink = millis() + 3000 + random(5000);
+      }
+    }
     // occasional idle blink so the crab feels alive between commands
     if (uiStarted && currentView == VIEW_EYES_NORMAL && !busy && !termMode
         && millis() > nextIdleBlink) {
@@ -1465,6 +1579,12 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
   </span>
 </div>
 
+<div class="sec">// avatar <span class="hint">&#8212; Claude wears the duck; cycle + stop face stand down</span></div>
+<div class="ctrl">
+  <button class="cbtn dim" id="avBtn" onclick="toggleAvatar()">&#9787; avatar off</button>
+  <span class="cysec">face is set only by Claude's hooks; goes sleepy if quiet 15m</span>
+</div>
+
 <div class="sec">// on stop</div>
 <div class="ctrl" style="justify-content:center">
   <span class="cysec">show
@@ -1615,7 +1735,15 @@ const FACE_META = {
   alert:       ['O_O',             'Alert',       'pops wide'],
   happy:       ['^_^',             'Happy',       'squint smile'],
   sleepy:      ['&#8212;_&#8212;', 'Sleepy',      'slow droop'],
-  dead:        ['x_x',             'Dead',        'shakes it off']
+  dead:        ['x_x',             'Dead',        'shakes it off'],
+  thinking:    ['&#9673;&#9673;&#8230;', 'Thinking', 'pupils drift up'],
+  focused:     ['&#9644;&#9644;', 'Focused',     'heads-down bars'],
+  debugging:   ['&#9673;&#8722;', 'Debugging',   'one eye squints'],
+  smug:        ['&#9601;&#9601;', 'Smug',        'half-lidded'],
+  eureka:      ['O&#10035;O',     'Eureka',      'pop + spark'],
+  overwhelmed: ['&#9632;&#9632;&#8242;', 'Overwhelmed', 'sweat drop'],
+  staring:     ['&#9673;&#9673;', 'Staring',     'right at you'],
+  proud:       ['^&#10035;^',     'Proud',       'sparkle']
 };
 
 async function loadFaces() {
@@ -1654,6 +1782,20 @@ async function setMeter() {
   reflectCycleOff();
   document.querySelectorAll('.vbtn').forEach(b =>
     b.classList.toggle('active', parseInt(b.dataset.v) === VIEW_METER));
+}
+
+let avOn = false;
+function reflectAvatar() {
+  const b = document.getElementById('avBtn');
+  b.innerHTML = avOn ? '☻ avatar on' : '☻ avatar off';
+  b.classList.toggle('on', avOn);
+  b.classList.toggle('dim', !avOn);
+}
+async function toggleAvatar() {
+  avOn = !avOn;
+  if (!await req('/avatar?on=' + (avOn ? 1 : 0))) { avOn = !avOn; return; }
+  reflectAvatar();
+  toast(avOn ? 'claude has the face' : 'released');
 }
 
 let cyOn = false;
@@ -1931,6 +2073,9 @@ async function clearAll() {
     document.getElementById('cyRnd').checked = !!j.cyclerandom;
     document.getElementById('cyMix').checked = !!j.cyclemix;
 
+    avOn = !!j.avatar;
+    reflectAvatar();
+
     await loadFaces();
     const sf = document.getElementById('sfSel');
     sf.value = j.stopmode === 'fixed' ? (j.stopface || 'none') : (j.stopmode || 'none');
@@ -2026,6 +2171,55 @@ void routeFace() {
   nextIdleBlink = millis() + 3000 + random(5000);
 }
 
+// /avatar?on=0|1 — the toggle; /avatar?face=<id> — Claude wears a face.
+// Setting a face requires the mode: with it off the call reports so and does
+// nothing, which keeps a stale hook from repossessing a duck Jason released.
+// No args reports current state. The face path deliberately does NOT touch
+// the cycle settings — leaving avatar mode puts the duck back how it was.
+void routeAvatar() {
+  if (server.hasArg("on")) {
+    const bool want = server.arg("on").toInt() != 0;
+    if (want != avatarMode) {
+      avatarMode = want;
+      avatarSeen = 0;
+      settingsTouch();
+      uiStarted  = true;
+      claudeState = CL_NONE;
+      termMode    = false;
+      if (avatarMode) {
+        // Possessed: hold a neutral face until Claude says otherwise.
+        currentView = VIEW_EYES_NORMAL;
+        drawNormalEyes();
+      } else {
+        // Released: back to idle eyes; the cycle resumes on its own tick if on.
+        currentView = VIEW_EYES_NORMAL;
+        drawNormalEyes();
+      }
+    }
+  }
+  if (server.hasArg("face")) {
+    if (!avatarMode) {
+      server.send(200, "application/json", "{\"avatar\":0,\"e\":\"off\"}");
+      return;
+    }
+    const int8_t idx = expressionIndex(server.arg("face"));
+    if (idx < 0) { server.send(404, "application/json", "{\"e\":1}"); return; }
+    avatarSeen  = millis();
+    uiStarted   = true;
+    claudeState = CL_NONE;
+    termMode    = false;
+    busy        = true;
+    currentView = VIEW_EXPRESSION;
+    currentExpr = (uint8_t)idx;
+    server.send(200, "application/json", "{\"ok\":1}");
+    animExpression((uint8_t)idx);
+    nextIdleBlink = millis() + 3000 + random(5000);
+    return;
+  }
+  server.send(200, "application/json",
+              String("{\"avatar\":") + (avatarMode ? "1" : "0") + "}");
+}
+
 // /meter?ctx=&session=&week=  — any subset; omitted values keep their last
 // reading, so a feeder that only has some numbers can still push what it has.
 void routeMeter() {
@@ -2090,8 +2284,8 @@ void routeMeterCycle() {
   if (server.hasArg("item")) {
     const int8_t slot = cycleSlotFor(server.arg("item"));
     if (slot >= 0) {
-      if (server.arg("on").toInt() != 0) cycleMask |=  (1 << slot);
-      else                               cycleMask &= ~(1 << slot);
+      if (server.arg("on").toInt() != 0) cycleMask |=  (1UL << slot);
+      else                               cycleMask &= ~(1UL << slot);
     }
   } else if (server.hasArg("on")) {
     mtrCycle = server.arg("on").toInt() != 0;
@@ -2168,6 +2362,10 @@ void routeSpeed() {
 // /claude?e=working|waiting|done|error|idle — Claude Code hook events
 void routeClaude() {
   const String e = server.arg("e");
+  // In avatar mode the lifecycle hooks lose the screen: Claude says how it
+  // feels via /avatar, and the badges still carry working/waiting. Answer ok
+  // so the hooks stay fire-and-forget.
+  if (avatarMode) { server.send(200, "application/json", "{\"avatar\":1}"); return; }
   server.send(200, "application/json", "{\"ok\":1}");
   if      (e == "working") enterClaude(CL_WORKING);
   else if (e == "waiting") enterClaude(CL_WAITING);
@@ -2278,6 +2476,7 @@ void routeState() {
   j += stopFaceMode == SF_RANDOM ? "random" : stopFaceMode == SF_FIXED ? "fixed" : "none";
   j += "\",\"stopface\":\"";  j += EXPRESSIONS[stopFaceIdx].id;  j += "\"";
   j += ",\"expression\":\"";      j += EXPRESSIONS[currentExpr].id;  j += "\"";
+  j += ",\"avatar\":";  j += avatarMode ? "true" : "false";
   j += ",\"cycleitems\":[";
   bool first = true;
   for (uint8_t i = 0; i < CY_SLOTS; i++) {
@@ -2391,6 +2590,7 @@ void setup() {
   server.on("/meter/view",  HTTP_GET, routeMeterView);
   server.on("/meter/cycle", HTTP_GET, routeMeterCycle);
   server.on("/stopface",    HTTP_GET, routeStopFace);
+  server.on("/avatar",      HTTP_GET, routeAvatar);
   server.on("/meter/overlay", HTTP_GET, routeMeterOverlay);
   server.on("/badge",       HTTP_GET, routeBadge);
   server.on("/claude",      HTTP_GET, routeClaude);

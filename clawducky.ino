@@ -372,6 +372,7 @@ void drawSquishEyes(bool closed = false) {
 #define ES_CROSS  3   // X
 #define ES_ARC    4   // ^ chevron
 #define ES_DISC   5   // filled disc
+#define ES_THA    6   // the actual Kannada ಠ: bowl + pupil + sideways-J headstroke
 
 // Expression faces get their own geometry rather than reusing the EYE_*
 // constants. Those describe a tall 30x60 eye sitting high on the panel, which
@@ -389,7 +390,7 @@ void drawSquishEyes(bool closed = false) {
 
 const Expression EXPRESSIONS[] = {
   //  id             shape     brow   tiltL tiltR  bHalf bGap  pupil pOX  anim
-  { "disapproval",   ES_RING,  true,      0,    0,    38,   7,  false,  0, AN_NONE  },  // ಠ_ಠ
+  { "disapproval",   ES_THA,   false,     0,    0,    38,   7,  false,  0, AN_NONE  },  // ಠ_ಠ, the real letter
   { "skeptical",     ES_RING,  true,    -15,    8,    38,   7,  true,   0, AN_NONE  },
   { "angry",         ES_RING,  true,     16,   16,    40,   4,  true,   0, AN_NONE  },
   { "sideeye",       ES_RING,  true,      0,    0,    38,   7,  true,  15, AN_NONE  },
@@ -407,6 +408,7 @@ int16_t eyeTopExtent(uint8_t shape) {
     case ES_RING:
     case ES_DISC:  return EX_R;
     case ES_FLAT:  return EX_THK / 2;
+    case ES_THA:   return EX_R + 25;   // bowl + fused bar + the hook's rise
     case ES_CROSS: return EX_R;
     case ES_ARC:   return 22;
     default:       return EYE_H / 2;   // ES_RECT
@@ -427,6 +429,28 @@ void drawEyeShape(uint8_t shape, int16_t cx, int16_t cy, int16_t r, uint16_t col
     case ES_DISC:
       tft.fillCircle(cx, cy, r, col);
       break;
+    case ES_THA: {
+      // The letter ಠ as typeset, not approximated. Three parts, and all three
+      // carry meaning: the pupil is part of the glyph (it's why ಠ reads as an
+      // eyeball), and the headstroke is a sans-serif capital J laid on its
+      // left side — straight bar fused onto the bowl, one 180° hook at the
+      // right end, plain cut on the left. Both eyes un-mirrored: the emoticon
+      // is the same letter twice.
+      tft.fillCircle(cx, cy, r, col);
+      tft.fillCircle(cx, cy, r - EX_THK, animBgColor);
+      tft.fillCircle(cx, cy, 9, col);
+      const int16_t barY = cy - r - 3;             // stroke centre; bottom edge kisses the bowl
+      const int16_t endX = cx + r - 5;             // bar hands off to the hook here
+      tft.fillRect(cx - r - 4, barY - EX_THK / 2, endX - (cx - r - 4), EX_THK, col);
+      const int16_t hr = 11;
+      for (int16_t a = -90; a <= 90; a += 12) {    // stamp the hook: out, up, over
+        const float rad = a * 0.0174533f;
+        tft.fillCircle(endX + (int16_t)(hr * cosf(rad)),
+                       (barY - hr) + (int16_t)(hr * sinf(rad)),
+                       EX_THK / 2, col);
+      }
+      break;
+    }
     case ES_FLAT:
       tft.fillRect(cx - r, cy - EX_THK / 2, r * 2, EX_THK, col);
       break;

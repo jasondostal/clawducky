@@ -1552,6 +1552,8 @@ canvas{width:100%;border-radius:8px;border:1.5px solid #38343a;
   font-size:12px;color:#d8d4cc;padding:7px 16px;opacity:0;
   transition:opacity .18s;pointer-events:none;white-space:nowrap;z-index:99}
 .toast.show{opacity:1}
+/* Controls avatar mode suppresses: still configured, just not in charge. */
+button[disabled],select[disabled],input[disabled]{opacity:.35;pointer-events:none}
 </style>
 </head>
 <body>
@@ -1790,6 +1792,13 @@ function reflectAvatar() {
   b.innerHTML = avOn ? '☻ avatar on' : '☻ avatar off';
   b.classList.toggle('on', avOn);
   b.classList.toggle('dim', !avOn);
+  // Grey out, never auto-flip: these are the user's settings, and avatar mode
+  // is an occupation, not a rewrite. Releasing the duck restores them as-is.
+  // Manual face buttons stay live — a human click is always an override.
+  ['sfSel','cyBtn','cySec','cyRnd','cyMix'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = avOn;
+  });
 }
 async function toggleAvatar() {
   avOn = !avOn;
